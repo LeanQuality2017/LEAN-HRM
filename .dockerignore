@@ -1,0 +1,20 @@
+# Exclude secrets and sensitive files
+.env
+.env.*
+*.env
+
+# Exclude source control, build output, dependencies, and local db
+.git
+.next
+node_modules
+db/
+
+# Explicitly ensure build essentials are included
+!src/
+!prisma/
+!public/
+!package.json
+!package-lock.json
+!next.config.ts
+!tsconfig.json
+
