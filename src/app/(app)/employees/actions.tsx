@@ -32,6 +32,18 @@ export function AddEmployeeButton({ companies, managers }: { companies: CompanyO
     if (!form.name || !form.email || !form.password || !form.employeeCode || !companyIds.length) {
       return toast({ title: 'Missing fields', description: 'Name, email, password, employee code and at least one company are required.', variant: 'destructive' })
     }
+    if (!form.designation.trim()) {
+      return toast({ title: 'Error', description: 'Designation is required.', variant: 'destructive' })
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      return toast({ title: 'Error', description: 'Enter a valid email address.', variant: 'destructive' })
+    }
+    if (form.password.length < 8 || !/[a-zA-Z]/.test(form.password) || !/\d/.test(form.password)) {
+      return toast({ title: 'Error', description: 'Password must be 8+ characters with at least one letter and one digit.', variant: 'destructive' })
+    }
+    if (Number(form.baseSalary) > 9999999999.99) {
+      return toast({ title: 'Error', description: 'Salary cannot exceed 9,999,999,999.99', variant: 'destructive' })
+    }
     setLoading(true)
     const res = await fetch('/api/employees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -135,7 +147,19 @@ export function EditEmployeeButton({ employee, companies }: {
   }
 
   async function submit() {
+    if (!form.name.trim()) {
+      return toast({ title: 'Error', description: 'Name is required', variant: 'destructive' })
+    }
+    if (!form.designation.trim()) {
+      return toast({ title: 'Error', description: 'Designation is required.', variant: 'destructive' })
+    }
     if (!companyIds.length) return toast({ title: 'Select at least one company', variant: 'destructive' })
+    if (Number(form.baseSalary) > 9999999999.99) {
+      return toast({ title: 'Error', description: 'Salary cannot exceed 9,999,999,999.99', variant: 'destructive' })
+    }
+    if (form.password && (form.password.length < 8 || !/[a-zA-Z]/.test(form.password) || !/\d/.test(form.password))) {
+      return toast({ title: 'Error', description: 'Password must be 8+ characters with at least one letter and one digit.', variant: 'destructive' })
+    }
     setLoading(true)
     const res = await fetch(`/api/employees?id=${employee.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },

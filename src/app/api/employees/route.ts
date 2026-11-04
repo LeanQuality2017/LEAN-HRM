@@ -92,11 +92,20 @@ export async function POST(req: Request) {
       assertCompanyInScope(cid, scopedIds)
     }
 
+    if (!body.designation || !body.designation.trim()) {
+      throw new ApiError(400, 'Designation is required.')
+    }
+
     const email = body.email.toLowerCase().trim()
     const exists = await db.user.findUnique({ where: { email } })
     if (exists) throw new ApiError(409, 'A user with this email already exists')
     const codeExists = await db.employee.findUnique({ where: { employeeCode: body.employeeCode } })
     if (codeExists) throw new ApiError(409, 'Employee code already in use')
+
+    if (body.phone && body.phone.trim()) {
+      const phoneExists = await db.user.findFirst({ where: { phone: body.phone.trim() } })
+      if (phoneExists) throw new ApiError(409, 'Phone number already exists.')
+    }
 
     // Wrapped in transaction
     const result = await db.$transaction(async (tx) => {
@@ -164,6 +173,13 @@ export async function PATCH(req: Request) {
       for (const cid of body.companyIds) {
         assertCompanyInScope(cid, scopedIds)
       }
+    }
+
+    if (body.phone !== undefined && body.phone !== null && body.phone.trim()) {
+      const phoneExists = await db.user.findFirst({
+        where: { phone: body.phone.trim(), id: { not: employee.userId } },
+      })
+      if (phoneExists) throw new ApiError(409, 'Phone number already exists.')
     }
 
     // Role changes check:

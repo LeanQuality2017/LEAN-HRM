@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const BASE_URL = 'http://localhost:3000';
-const BIOMETRIC_KEY = '753d6a42993b132a32244937750b651e6c24360a46698d0a3d78ea5f97a916c0';
+const BIOMETRIC_KEY = process.env.BIOMETRIC_API_KEY || '0042497832aa12134ec5af7a71e0b1d58a2dd845807c7057';
 const PASSWORD = 'Password@123';
 
 const results = [];
@@ -468,7 +468,7 @@ try {
     orderBy: { date: 'desc' }
   });
   const nextDate = new Date(lastReport ? lastReport.date : '2026-11-01');
-  nextDate.setDate(nextDate.getDate() + 1);
+  nextDate.setDate(nextDate.getDate() + 2);
   const todayStr = nextDate.toISOString().split('T')[0];
 
   const reportRes = await api('/api/work-reports', {
@@ -1036,6 +1036,150 @@ try {
   recordResult('I3', pass, `Case-insensitive search: lower count=${lowerCodes.length}, upper count=${upperCodes.length} (codes: [${lowerCodes.join(', ')}])`);
 } catch (e) {
   recordResult('I3', false, `Error: ${e.message}`);
+}
+
+// -------------------------------------------------------------
+// J. VALIDATION HARDENING (UAT FIXES)
+// -------------------------------------------------------------
+
+// J1: company-admin with email "1" -> rejected
+try {
+  const f2Res = await api('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `J1 Co ${Date.now()}`,
+      code: `J1${Date.now().toString().slice(-4)}`,
+      adminEmail: '1',
+      adminPassword: 'Password@123'
+    })
+  }, 'superadmin1@unihr.com');
+  const f2Json = await f2Res.json();
+  const pass = f2Res.status === 400 && f2Json.error && f2Json.error.includes('Enter a valid email address');
+  recordResult('J1', pass, `Company admin email "1" rejected HTTP ${f2Res.status}: "${f2Json.error}"`);
+} catch (e) {
+  recordResult('J1', false, `Error: ${e.message}`);
+}
+
+// J2: weak password "123" -> rejected
+try {
+  const f4Res = await api('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Weak Pass User',
+      email: `weak_${Date.now()}@unihr.com`,
+      role: 'EMPLOYEE',
+      password: '123',
+      companyId: alphaCompany.id,
+      employeeCode: `WP-${Date.now().toString().slice(-4)}`,
+      designation: 'Engineer'
+    })
+  }, 'superadmin1@unihr.com');
+  const f4Json = await f4Res.json();
+  const pass = f4Res.status === 400 && f4Json.error && f4Json.error.includes('8+ characters');
+  recordResult('J2', pass, `Weak password "123" rejected HTTP ${f4Res.status}: "${f4Json.error}"`);
+} catch (e) {
+  recordResult('J2', false, `Error: ${e.message}`);
+}
+
+// J3: salary 999999999999.99 -> 400 with field error (never 500)
+try {
+  const f6Res = await api('/api/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Huge Salary Emp',
+      email: `huge_${Date.now()}@unihr.com`,
+      password: 'Password@123',
+      companyId: alphaCompany.id,
+      employeeCode: `HS-${Date.now().toString().slice(-4)}`,
+      designation: 'Architect',
+      baseSalary: 999999999999.99
+    })
+  }, 'superadmin1@unihr.com');
+  const f6Json = await f6Res.json();
+  const pass = f6Res.status === 400 && f6Json.error && f6Json.error.includes('Salary cannot exceed');
+  recordResult('J3', pass, `Salary 999999999999.99 rejected HTTP ${f6Res.status}: "${f6Json.error}" (never 500)`);
+} catch (e) {
+  recordResult('J3', false, `Error: ${e.message}`);
+}
+
+// J4: employee create without designation -> rejected
+try {
+  const f7Res = await api('/api/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'No Desig Emp',
+      email: `nodesig_${Date.now()}@unihr.com`,
+      password: 'Password@123',
+      companyId: alphaCompany.id,
+      employeeCode: `ND-${Date.now().toString().slice(-4)}`,
+      designation: ''
+    })
+  }, 'superadmin1@unihr.com');
+  const f7Json = await f7Res.json();
+  const pass = f7Res.status === 400 && f7Json.error && f7Json.error.includes('Designation is required');
+  recordResult('J4', pass, `Employee create without designation rejected HTTP ${f7Res.status}: "${f7Json.error}"`);
+} catch (e) {
+  recordResult('J4', false, `Error: ${e.message}`);
+}
+
+// J5: duplicate phone -> message contains "already exists"
+try {
+  const testPhone = `+919876${Date.now().toString().slice(-6)}`;
+  const p1Res = await api('/api/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Phone User 1',
+      email: `p1_${Date.now()}@unihr.com`,
+      password: 'Password@123',
+      companyId: alphaCompany.id,
+      employeeCode: `P1-${Date.now().toString().slice(-4)}`,
+      designation: 'Engineer',
+      phone: testPhone
+    })
+  }, 'superadmin1@unihr.com');
+  const p1Json = await p1Res.json();
+  createdEntities.push({ type: 'Employee', id: p1Json.data?.employeeId });
+
+  const p2Res = await api('/api/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Phone User 2',
+      email: `p2_${Date.now()}@unihr.com`,
+      password: 'Password@123',
+      companyId: alphaCompany.id,
+      employeeCode: `P2-${Date.now().toString().slice(-4)}`,
+      designation: 'Engineer',
+      phone: testPhone
+    })
+  }, 'superadmin1@unihr.com');
+  const p2Json = await p2Res.json();
+  const pass = p2Res.status === 409 && p2Json.error && p2Json.error.includes('already exists');
+  recordResult('J5', pass, `Duplicate phone rejected HTTP ${p2Res.status}: "${p2Json.error}"`);
+} catch (e) {
+  recordResult('J5', false, `Error: ${e.message}`);
+}
+
+// J6: duplicate company name (case variant) -> rejected
+try {
+  const r1Res = await api('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: alphaCompany.name.toLowerCase(),
+      code: `VAR${Date.now().toString().slice(-4)}`
+    })
+  }, 'superadmin1@unihr.com');
+  const r1Json = await r1Res.json();
+  const pass = r1Res.status === 409 && r1Json.error && r1Json.error.includes('already exists');
+  recordResult('J6', pass, `Duplicate company name (case variant "${alphaCompany.name.toLowerCase()}") rejected HTTP ${r1Res.status}: "${r1Json.error}"`);
+} catch (e) {
+  recordResult('J6', false, `Error: ${e.message}`);
 }
 
 // Cleanup browser

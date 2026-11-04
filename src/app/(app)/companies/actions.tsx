@@ -21,6 +21,14 @@ export function AddCompanyButton() {
 
   async function submit() {
     if (!form.name || !form.code) return toast({ title: 'Name & code required', variant: 'destructive' })
+    if (form.adminEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminEmail.trim())) {
+      return toast({ title: 'Error', description: 'Enter a valid email address.', variant: 'destructive' })
+    }
+    if (form.adminPassword) {
+      if (form.adminPassword.length < 8 || !/[a-zA-Z]/.test(form.adminPassword) || !/\d/.test(form.adminPassword)) {
+        return toast({ title: 'Error', description: 'Password must be 8+ characters with at least one letter and one digit.', variant: 'destructive' })
+      }
+    }
     setLoading(true)
     const res = await fetch('/api/companies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
     const json = await res.json()

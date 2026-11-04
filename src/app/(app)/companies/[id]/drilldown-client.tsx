@@ -108,6 +108,18 @@ export function CompanyActionButtons({
 
   async function handleCreateUser(e: React.FormEvent) {
     e.preventDefault()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      toast({ title: 'Error', description: 'Enter a valid email address.', variant: 'destructive' })
+      return
+    }
+    if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+      toast({ title: 'Error', description: 'Password must be 8+ characters with at least one letter and one digit.', variant: 'destructive' })
+      return
+    }
+    if (baseSalary && Number(baseSalary) > 9999999999.99) {
+      toast({ title: 'Error', description: 'Salary cannot exceed 9,999,999,999.99', variant: 'destructive' })
+      return
+    }
     setLoading(true)
     try {
       const res = await fetch('/api/users', {

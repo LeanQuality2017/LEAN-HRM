@@ -33,6 +33,11 @@ export async function POST(req: Request) {
       throw new ApiError(409, 'A user with this email already exists')
     }
 
+    if (phone && String(phone).trim()) {
+      const phoneExists = await db.user.findFirst({ where: { phone: String(phone).trim() } })
+      if (phoneExists) throw new ApiError(409, 'Phone number already exists.')
+    }
+
     const company = await db.company.findUnique({ where: { id: companyId } })
     if (!company) throw new ApiError(404, 'Company not found')
 

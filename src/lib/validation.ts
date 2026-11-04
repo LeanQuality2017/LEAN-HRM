@@ -31,11 +31,16 @@ export function validateBody<T>(schema: z.ZodType<T>, data: unknown): T {
 // Common primitive schemas
 export const shortString = z.string().trim().max(120, 'Maximum 120 characters allowed')
 export const nameSchema = z.string().trim().min(1, 'Name is required').max(120, 'Name cannot exceed 120 characters')
-export const emailSchema = z.string().trim().email('Invalid email address').max(120, 'Email cannot exceed 120 characters')
-export const passwordSchema = z.string().min(8, 'Password must be at least 8 characters').max(120, 'Password cannot exceed 120 characters')
+export const emailSchema = z.string().trim().email('Enter a valid email address.').max(120, 'Email cannot exceed 120 characters')
+export const passwordSchema = z
+  .string()
+  .min(8, 'Password must be 8+ characters with at least one letter and one digit.')
+  .max(120, 'Password cannot exceed 120 characters')
+  .regex(/^(?=.*[a-zA-Z])(?=.*\d)/, 'Password must be 8+ characters with at least one letter and one digit.')
 export const textField = z.string().trim().max(2000, 'Text field cannot exceed 2000 characters')
 export const longTextField = z.string().trim().max(5000, 'Notes/description cannot exceed 5000 characters')
 export const nonNegativeAmount = z.coerce.number().min(0, 'Amount cannot be negative')
+export const salarySchema = z.coerce.number().min(0, 'Salary cannot be negative').max(9999999999.99, 'Salary cannot exceed 9,999,999,999.99')
 export const positiveAmount = z.coerce.number().positive('Amount must be greater than 0')
 export const ratingSchema = z.coerce.number().min(0, 'Rating must be at least 0').max(5, 'Rating cannot exceed 5')
 
@@ -203,18 +208,18 @@ export const employeeCreateSchema = z.object({
   employeeCode: shortString.min(1, 'employeeCode required'),
   role: roleEnum.optional(),
   phone: shortString.nullish(),
-  designation: shortString.optional(),
-  baseSalary: nonNegativeAmount.optional(),
+  designation: shortString.min(1, 'Designation is required.'),
+  baseSalary: salarySchema.optional(),
   joinedAt: z.string().nullish(),
   managerId: shortString.nullish(),
   companyIds: z.array(shortString).optional(),
 })
 
 export const employeeUpdateSchema = z.object({
-  name: shortString.optional(),
+  name: nameSchema.optional(),
   phone: shortString.nullish(),
-  designation: shortString.optional(),
-  baseSalary: nonNegativeAmount.optional(),
+  designation: shortString.min(1, 'Designation is required.').optional(),
+  baseSalary: salarySchema.optional(),
   managerId: shortString.nullish(),
   isActive: z.boolean().optional(),
   status: shortString.optional(),
@@ -377,8 +382,8 @@ export const userCreateSchema = z.object({
   password: passwordSchema,
   companyId: shortString.min(1, 'companyId required'),
   employeeCode: shortString.optional(),
-  designation: shortString.optional(),
-  baseSalary: nonNegativeAmount.optional(),
+  designation: shortString.min(1, 'Designation is required.').optional(),
+  baseSalary: salarySchema.optional(),
   phone: shortString.nullish(),
 })
 

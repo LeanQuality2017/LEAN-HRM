@@ -24,6 +24,11 @@ export async function POST(req: Request) {
   return handle(async () => {
     const auth = await requireAuth([ROLES.SUPER_ADMIN])
     const body = validateBody(companyCreateSchema, await req.json())
+    const nameExists = await db.company.findFirst({
+      where: { name: { equals: body.name.trim(), mode: 'insensitive' } },
+    })
+    if (nameExists) throw new ApiError(409, 'A company with this name already exists.')
+
     const exists = await db.company.findUnique({ where: { code: body.code.toUpperCase() } })
     if (exists) throw new ApiError(409, 'Company code already exists')
 
