@@ -99,3 +99,136 @@ export function ToggleCompanyButton({ id, isActive }: { id: string; isActive: bo
     </Button>
   )
 }
+
+
+export function DeleteCompanyButton({
+  id,
+  name,
+  employeeCount = 0,
+}: {
+  id: string
+  name: string
+  employeeCount?: number
+}) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmName, setConfirmName] = useState('')
+
+  async function handleDelete() {
+    if (!email || !password) {
+      return toast({ title: 'Error', description: 'Superadmin email and password required.', variant: 'destructive' })
+    }
+    if (confirmName !== name) {
+      return toast({ title: 'Error', description: 'Company name does not match confirmation.', variant: 'destructive' })
+    }
+
+    setLoading(true)
+    const res = await fetch(`/api/companies/${id}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, confirmName }),
+    })
+    const json = await res.json().catch(() => ({}))
+    setLoading(false)
+
+    if (!res.ok) {
+      return toast({ title: 'Delete failed', description: json.error || 'Failed to delete company', variant: 'destructive' })
+    }
+
+    toast({ title: '✅ Company permanently deleted', description: `${name} and linked records removed.` })
+    setOpen(false)
+    setEmail('')
+    setPassword('')
+    setConfirmName('')
+    router.refresh()
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="destructive" className="h-7 text-xs">
+          Delete
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-destructive flex items-center gap-2">
+            Delete Company
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 pt-1">
+          <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-xs space-y-1">
+            <p className="font-semibold text-destructive">Warning: This action is permanent and irreversible.</p>
+            <p className="text-muted-foreground">
+              Company: <span className="font-medium text-foreground">{name}</span>
+            </p>
+            <p className="text-muted-foreground">
+              Linked active employees: <span className="font-medium text-foreground">{employeeCount}</span>
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Superadmin Email *</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="superadmin1@unihr.com"
+              className="h-8 text-xs"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Superadmin Password *</Label>
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="h-8 text-xs"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Type <span className="font-bold select-all">{name}</span> to confirm *
+            </Label>
+            <Input
+              value={confirmName}
+              onChange={(e) => setConfirmName(e.target.value)}
+              placeholder={name}
+              className="h-8 text-xs"
+            />
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setOpen(false)}
+              disabled={loading}
+              className="h-8 text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={handleDelete}
+              disabled={loading || confirmName !== name || !email || !password}
+              className="h-8 text-xs"
+            >
+              {loading && <Loader2 className="h-3 w-3 animate-spin mr-1.5" />}
+              Confirm Hard Delete
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}

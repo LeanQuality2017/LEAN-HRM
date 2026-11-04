@@ -182,6 +182,12 @@ export const companyUpdateSchema = z.object({
   isActive: z.boolean().optional(),
 })
 
+export const companyDeleteSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1, 'Password is required'),
+  confirmName: z.string().min(1, 'Confirmation company name is required'),
+})
+
 // 9. Courses
 export const courseCreateSchema = z.object({
   name: nameSchema,

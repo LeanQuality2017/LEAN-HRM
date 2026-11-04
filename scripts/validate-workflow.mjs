@@ -1182,6 +1182,173 @@ try {
   recordResult('J6', false, `Error: ${e.message}`);
 }
 
+
+// -------------------------------------------------------------
+// K. COMPANY HARD-DELETE WITH STEP-UP AUTH (R3)
+// -------------------------------------------------------------
+
+// K1: delete with WRONG password -> 401/403
+let k1Comp;
+try {
+  const ts = Date.now();
+  const cRes = await api('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `probe-del-${ts}-k1`,
+      code: `PDK1${ts.toString().slice(-4)}`
+    })
+  }, 'superadmin1@unihr.com');
+  const cJson = await cRes.json();
+  k1Comp = cJson.data;
+
+  const delRes = await api(`/api/companies/${k1Comp.id}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'superadmin1@unihr.com',
+      password: 'WrongPassword@999',
+      confirmName: k1Comp.name
+    })
+  }, 'superadmin1@unihr.com');
+  const delJson = await delRes.json();
+  const pass = (delRes.status === 401 || delRes.status === 403) && delJson.error;
+  recordResult('K1', pass, `Delete with WRONG password rejected HTTP ${delRes.status}: "${delJson.error}"`);
+} catch (e) {
+  recordResult('K1', false, `Error: ${e.message}`);
+}
+
+// K2: correct creds but WRONG confirmName -> 400
+let k2Comp;
+try {
+  const ts = Date.now();
+  const cRes = await api('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `probe-del-${ts}-k2`,
+      code: `PDK2${ts.toString().slice(-4)}`
+    })
+  }, 'superadmin1@unihr.com');
+  const cJson = await cRes.json();
+  k2Comp = cJson.data;
+
+  const delRes = await api(`/api/companies/${k2Comp.id}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'superadmin1@unihr.com',
+      password: PASSWORD,
+      confirmName: 'definitely-not-matching-name'
+    })
+  }, 'superadmin1@unihr.com');
+  const delJson = await delRes.json();
+  const pass = delRes.status === 400 && delJson.error && delJson.error.includes('match');
+  recordResult('K2', pass, `Correct creds with WRONG confirmName rejected HTTP ${delRes.status}: "${delJson.error}"`);
+} catch (e) {
+  recordResult('K2', false, `Error: ${e.message}`);
+}
+
+// K3: throwaway company (no employees) -> delete with valid proof -> 200, then verify gone from list
+try {
+  const ts = Date.now();
+  const cRes = await api('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `probe-del-${ts}-k3`,
+      code: `PDK3${ts.toString().slice(-4)}`
+    })
+  }, 'superadmin1@unihr.com');
+  const cJson = await cRes.json();
+  const k3Comp = cJson.data;
+
+  const delRes = await api(`/api/companies/${k3Comp.id}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'superadmin1@unihr.com',
+      password: PASSWORD,
+      confirmName: k3Comp.name
+    })
+  }, 'superadmin1@unihr.com');
+  const delJson = await delRes.json();
+
+  const inDb = await prisma.company.findUnique({ where: { id: k3Comp.id } });
+  const pass = delRes.status === 200 && delJson.deleted === true && !inDb;
+  recordResult('K3', pass, `Throwaway company (no employees) deleted HTTP ${delRes.status}, verified absent in DB (inDb=${Boolean(inDb)})`);
+} catch (e) {
+  recordResult('K3', false, `Error: ${e.message}`);
+}
+
+// K4: throwaway company WITH employees -> delete with valid proof -> 200, verify cascade
+try {
+  const ts = Date.now();
+  const cRes = await api('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `probe-del-${ts}-k4`,
+      code: `PDK4${ts.toString().slice(-4)}`
+    })
+  }, 'superadmin1@unihr.com');
+  const cJson = await cRes.json();
+  const k4Comp = cJson.data;
+
+  const empRes = await api('/api/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `K4 Cascade Emp ${ts}`,
+      email: `k4_${ts}@unihr.com`,
+      password: PASSWORD,
+      companyId: k4Comp.id,
+      employeeCode: `K4-${ts.toString().slice(-4)}`,
+      designation: 'Cascade Engineer'
+    })
+  }, 'superadmin1@unihr.com');
+  const empJson = await empRes.json();
+  const k4EmpId = empJson.data?.employeeId;
+  const k4UserId = empJson.data?.userId;
+
+  const delRes = await api(`/api/companies/${k4Comp.id}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'superadmin1@unihr.com',
+      password: PASSWORD,
+      confirmName: k4Comp.name
+    })
+  }, 'superadmin1@unihr.com');
+  const delJson = await delRes.json();
+
+  const compAfter = await prisma.company.findUnique({ where: { id: k4Comp.id } });
+  const empAfter = k4EmpId ? await prisma.employee.findUnique({ where: { id: k4EmpId } }) : null;
+  const userAfter = k4UserId ? await prisma.user.findUnique({ where: { id: k4UserId } }) : null;
+
+  const pass = delRes.status === 200 && delJson.deleted === true && !compAfter && !empAfter && !userAfter;
+  recordResult('K4', pass, `Throwaway company WITH employees deleted HTTP ${delRes.status}, cascade confirmed (comp=${Boolean(compAfter)}, emp=${Boolean(empAfter)}, user=${Boolean(userAfter)})`);
+
+  // Clean up k1 and k2 throwaway companies too if they were created
+  if (k1Comp?.id) {
+    await api(`/api/companies/${k1Comp.id}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'superadmin1@unihr.com', password: PASSWORD, confirmName: k1Comp.name })
+    }, 'superadmin1@unihr.com').catch(() => {});
+  }
+  if (k2Comp?.id) {
+    await api(`/api/companies/${k2Comp.id}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'superadmin1@unihr.com', password: PASSWORD, confirmName: k2Comp.name })
+    }, 'superadmin1@unihr.com').catch(() => {});
+  }
+} catch (e) {
+  recordResult('K4', false, `Error: ${e.message}`);
+}
+
+
 // Cleanup browser
 bWs.close();
 pWs.close();

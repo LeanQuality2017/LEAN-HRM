@@ -1,6 +1,16 @@
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { ROLES } from '@/lib/constants'
+import { verifyPassword } from '@/lib/password'
+import {
+  buildRateLimitKey,
+  isLoginRateLimited,
+  recordFailedLogin,
+  resetLoginRateLimit,
+  getClientIp,
+} from '@/lib/rate-limit'
+import type { User } from '@prisma/client'
 
 export interface AuthContext {
   userId: string
@@ -131,4 +141,48 @@ export async function assertInstituteInScope(scopedCompanyIds: string[] | null):
 // Get all company IDs visible to a user (SUPER_ADMIN sees all -> returns null)
 export async function visibleCompanyIds(auth: AuthContext): Promise<string[] | null> {
   return getScopedCompanyIds(auth)
+}
+
+
+// Reusable Superadmin Step-Up Credential Verification
+export async function verifySuperadminStepUp(
+  auth: AuthContext,
+  email: string,
+  password: string,
+  req?: Request
+): Promise<User> {
+  if (auth.role !== ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, 'Forbidden: superadmin credential authorization required')
+  }
+
+  const cleanEmail = (email || '').toLowerCase().trim()
+  const ip = getClientIp(req)
+  const rateLimitKey = buildRateLimitKey(cleanEmail || 'unknown', ip)
+
+  if (isLoginRateLimited(rateLimitKey)) {
+    throw new ApiError(429, 'Too many attempts, try again later')
+  }
+
+  if (!cleanEmail || !password) {
+    recordFailedLogin(rateLimitKey)
+    throw new ApiError(401, 'Invalid credentials')
+  }
+
+  const user = await db.user.findUnique({
+    where: { email: cleanEmail },
+  })
+
+  if (!user || !user.isActive || user.role !== ROLES.SUPER_ADMIN || user.id !== auth.userId) {
+    recordFailedLogin(rateLimitKey)
+    throw new ApiError(401, 'Invalid credentials')
+  }
+
+  const valid = verifyPassword(password, user.passwordHash)
+  if (!valid) {
+    recordFailedLogin(rateLimitKey)
+    throw new ApiError(401, 'Invalid credentials')
+  }
+
+  resetLoginRateLimit(rateLimitKey)
+  return user
 }

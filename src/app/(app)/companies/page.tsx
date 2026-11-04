@@ -7,7 +7,7 @@ import { getScopedCompanyIds } from '@/lib/api-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { AddCompanyButton, ToggleCompanyButton } from './actions'
+import { AddCompanyButton, ToggleCompanyButton, DeleteCompanyButton } from './actions'
 import { fmtDate } from '@/lib/constants'
 import { Building2, Users, CalendarCheck, GraduationCap, ArrowRight } from 'lucide-react'
 
@@ -104,7 +104,12 @@ export default async function CompaniesPage() {
                     Manage & Drill Down <ArrowRight className="h-3 w-3 ml-1" />
                   </Link>
                 </Button>
-                {isSuperAdmin && <ToggleCompanyButton id={c.id} isActive={c.isActive} />}
+                {isSuperAdmin && (
+                  <div className="flex items-center gap-1.5">
+                    <ToggleCompanyButton id={c.id} isActive={c.isActive} />
+                    <DeleteCompanyButton id={c.id} name={c.name} employeeCount={statMap[c.id]?.employees ?? 0} />
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
