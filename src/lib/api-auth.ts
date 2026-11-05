@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -19,15 +20,39 @@ export interface AuthContext {
   name: string
 }
 
-// Returns session info or null
+// Request-scoped user lookup for React Server Components (falls back to direct invocation in Route Handlers)
+export const getLiveUser = cache(async (userId: string) => {
+  return db.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      isActive: true,
+      employee: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  })
+})
+
+// Returns live session info or null if unauthenticated, missing, or deactivated
 export async function getAuth(): Promise<AuthContext | null> {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) return null
+
+  const liveUser = await getLiveUser(session.user.id)
+  if (!liveUser || !liveUser.isActive) {
+    return null
+  }
+
   return {
-    userId: session.user.id,
-    role: session.user.role,
-    employeeId: session.user.employeeId,
-    name: session.user.name ?? '',
+    userId: liveUser.id,
+    role: liveUser.role,
+    employeeId: liveUser.employee?.id ?? null,
+    name: liveUser.name ?? '',
   }
 }
 
@@ -142,7 +167,6 @@ export async function assertInstituteInScope(scopedCompanyIds: string[] | null):
 export async function visibleCompanyIds(auth: AuthContext): Promise<string[] | null> {
   return getScopedCompanyIds(auth)
 }
-
 
 // Reusable Superadmin Step-Up Credential Verification
 export async function verifySuperadminStepUp(
