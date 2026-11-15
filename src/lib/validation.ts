@@ -219,6 +219,7 @@ export const employeeCreateSchema = z.object({
   joinedAt: z.string().nullish(),
   managerId: shortString.nullish(),
   companyIds: z.array(shortString).optional(),
+  administeredCompanyIds: z.array(shortString).optional(),
 })
 
 export const employeeUpdateSchema = z.object({
@@ -232,6 +233,7 @@ export const employeeUpdateSchema = z.object({
   password: passwordSchema.optional(),
   role: roleEnum.optional(),
   companyIds: z.array(shortString).optional(),
+  administeredCompanyIds: z.array(shortString).optional(),
 })
 
 // 11. Enroll
@@ -387,6 +389,7 @@ export const userCreateSchema = z.object({
   role: roleEnum,
   password: passwordSchema,
   companyId: shortString.min(1, 'companyId required'),
+  companyIds: z.array(shortString).optional(),
   employeeCode: shortString.optional(),
   designation: shortString.min(1, 'Designation is required.').optional(),
   baseSalary: salarySchema.optional(),

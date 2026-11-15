@@ -93,10 +93,13 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
   }
 }
 
-// Get all scoped company IDs for an authenticated user (SUPER_ADMIN sees all -> returns null)
-export async function getScopedCompanyIds(auth: AuthContext | { role: string; userId: string; employeeId?: string | null }): Promise<string[] | null> {
+// Get all company IDs the authenticated caller is strictly authorized to administer
+// Derived EXCLUSIVELY from UserCompanyScope. Returns null for SUPER_ADMIN, [] for non-admin roles.
+export async function getAdministeredCompanyIds(
+  auth: AuthContext | { role: string; userId: string; employeeId?: string | null }
+): Promise<string[] | null> {
   if (auth.role === 'SUPER_ADMIN') {
-    return null // all companies unrestricted
+    return null // Global administrative scope
   }
 
   if (auth.role === 'COMPANY_ADMIN' || auth.role === 'HR') {
@@ -104,29 +107,47 @@ export async function getScopedCompanyIds(auth: AuthContext | { role: string; us
       where: { userId: auth.userId },
       select: { companyId: true },
     })
-    if (scopes.length > 0) {
-      return scopes.map((s) => s.companyId)
-    }
-    // Fallback if user also has employee assignment
-    if (auth.employeeId) {
-      const assignments = await db.employeeCompanyAssignment.findMany({
-        where: { employeeId: auth.employeeId },
-        select: { companyId: true },
-      })
-      return assignments.map((a) => a.companyId)
-    }
+    return scopes.map((s) => s.companyId)
+  }
+
+  // Non-administrative roles (MANAGER, EMPLOYEE, STUDENT) fail closed to []
+  return []
+}
+
+// Get all company IDs where the authenticated caller holds active employee assignments (for staff self-service)
+// Derived EXCLUSIVELY from EmployeeCompanyAssignment.
+export async function getEmployedCompanyIds(
+  auth: AuthContext | { employeeId?: string | null }
+): Promise<string[]> {
+  if (!auth.employeeId) {
     return []
   }
 
+  const assignments = await db.employeeCompanyAssignment.findMany({
+    where: { employeeId: auth.employeeId },
+    select: { companyId: true },
+  })
+  return assignments.map((a) => a.companyId)
+}
+
+// Get all scoped company IDs for an authenticated user (SUPER_ADMIN sees all -> returns null)
+// Insecure employment fallback eliminated:
+// - COMPANY_ADMIN / HR delegate strictly to getAdministeredCompanyIds (UserCompanyScope only)
+// - MANAGER / EMPLOYEE delegate strictly to getEmployedCompanyIds (EmployeeCompanyAssignment only)
+// - STUDENT returns institute companies
+export async function getScopedCompanyIds(
+  auth: AuthContext | { role: string; userId: string; employeeId?: string | null }
+): Promise<string[] | null> {
+  if (auth.role === 'SUPER_ADMIN') {
+    return null // all companies unrestricted
+  }
+
+  if (auth.role === 'COMPANY_ADMIN' || auth.role === 'HR') {
+    return getAdministeredCompanyIds(auth)
+  }
+
   if (auth.role === 'MANAGER' || auth.role === 'EMPLOYEE') {
-    if (auth.employeeId) {
-      const assignments = await db.employeeCompanyAssignment.findMany({
-        where: { employeeId: auth.employeeId },
-        select: { companyId: true },
-      })
-      return assignments.map((a) => a.companyId)
-    }
-    return []
+    return getEmployedCompanyIds(auth)
   }
 
   if (auth.role === 'STUDENT') {

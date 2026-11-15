@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
+import { requireAuth, handle, ApiError, getAdministeredCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
 import { hashPassword } from '@/lib/password'
 import { AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
@@ -10,14 +10,18 @@ export async function POST(req: Request) {
   return handle(async () => {
     const auth = await requireAuth(['SUPER_ADMIN', 'COMPANY_ADMIN'])
     const body = validateBody(userCreateSchema, await req.json())
-    const { name, email, role, password, companyId, employeeCode, designation, baseSalary, phone } = body
+    const { name, email, role, password, companyId, companyIds, employeeCode, designation, baseSalary, phone } = body
 
-    const scopedIds = await getScopedCompanyIds(auth)
+    const administeredIds = await getAdministeredCompanyIds(auth)
+    const targetAdminCompanyIds: string[] = Array.isArray(companyIds) && companyIds.length > 0 ? companyIds : [companyId]
 
     // Authorization & Hierarchy Rules
     if (auth.role === 'COMPANY_ADMIN') {
-      // Must be within their own company
-      assertCompanyInScope(companyId, scopedIds)
+      // Must be within their own administered scope
+      assertCompanyInScope(companyId, administeredIds)
+      for (const cid of targetAdminCompanyIds) {
+        assertCompanyInScope(cid, administeredIds)
+      }
       // Cannot create SUPER_ADMIN or COMPANY_ADMIN
       if (role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN') {
         throw new ApiError(403, 'Forbidden: Company Admin can only create HR, Manager, or Employee roles')
@@ -25,6 +29,8 @@ export async function POST(req: Request) {
       if (!['HR', 'MANAGER', 'EMPLOYEE'].includes(role)) {
         throw new ApiError(400, 'Invalid role for Company Admin provisioning')
       }
+    } else if (auth.role === 'SUPER_ADMIN') {
+      // SUPER_ADMIN has global scope (administeredIds === null)
     }
 
     const cleanEmail = email.toLowerCase().trim()
@@ -40,6 +46,12 @@ export async function POST(req: Request) {
 
     const company = await db.company.findUnique({ where: { id: companyId } })
     if (!company) throw new ApiError(404, 'Company not found')
+
+    // Verify all target admin companies exist
+    for (const cid of targetAdminCompanyIds) {
+      const targetCo = await db.company.findUnique({ where: { id: cid } })
+      if (!targetCo) throw new ApiError(404, `Company not found: ${cid}`)
+    }
 
     let code = employeeCode?.trim()
     if (!code) {
@@ -67,13 +79,13 @@ export async function POST(req: Request) {
         },
       })
 
-      // If Admin or HR, populate UserCompanyScope
+      // If Admin or HR, populate UserCompanyScope transactionally for all authorized companies
       if (role === 'COMPANY_ADMIN' || role === 'HR') {
-        await tx.userCompanyScope.create({
-          data: {
+        await tx.userCompanyScope.createMany({
+          data: targetAdminCompanyIds.map((cid: string) => ({
             userId: user.id,
-            companyId,
-          },
+            companyId: cid,
+          })),
         })
       }
 
@@ -103,6 +115,7 @@ export async function POST(req: Request) {
         email: cleanEmail,
         role,
         companyId,
+        companyIds: targetAdminCompanyIds,
       })
       return { user: safeUser, employee }
     })
