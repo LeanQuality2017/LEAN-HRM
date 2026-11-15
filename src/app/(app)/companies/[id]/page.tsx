@@ -1,9 +1,9 @@
+export const dynamic = 'force-dynamic'
+
 import Link from 'next/link'
-import { notFound, redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { getScopedCompanyIds } from '@/lib/api-auth'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,29 +29,20 @@ export default async function CompanyDrillDownPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-
-  const { id } = await params
-  const role = session.user.role
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'])
+  const { role, administeredCompanyIds } = auth
   const isSuperAdmin = role === 'SUPER_ADMIN'
   const isCompanyAdmin = role === 'COMPANY_ADMIN'
   const isHr = role === 'HR'
   const isAdmin = isSuperAdmin || isCompanyAdmin
 
+  const { id } = await params
+
   // Access control: SUPER_ADMIN any; COMPANY_ADMIN/HR only scoped; others 404
-  if (!['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'].includes(role)) {
-    notFound()
-  }
-
-  const scopedIds = await getScopedCompanyIds({
-    role,
-    userId: session.user.id,
-    employeeId: session.user.employeeId,
-  })
-
-  if (scopedIds && !scopedIds.includes(id)) {
-    notFound()
+  if (!isSuperAdmin) {
+    if (!administeredCompanyIds || !administeredCompanyIds.includes(id)) {
+      notFound()
+    }
   }
 
   const company = await db.company.findUnique({
@@ -135,19 +126,48 @@ export default async function CompanyDrillDownPage({
       })
     : []
 
-  // Available employees for assignment modal
-  const allEmployees = isAdmin
-    ? await db.employee.findMany({
-        where: { status: 'ACTIVE' },
-        select: {
-          id: true,
-          employeeCode: true,
-          designation: true,
-          user: { select: { name: true, email: true } },
+  // Available employees for assignment modal (POOL_POLICY = b1)
+  let candidateEmployees: { id: string; employeeCode: string; designation: string; user: { name: string } }[] = []
+  if (isSuperAdmin) {
+    candidateEmployees = await db.employee.findMany({
+      where: { status: 'ACTIVE' },
+      select: {
+        id: true,
+        employeeCode: true,
+        designation: true,
+        user: { select: { name: true } },
+      },
+      orderBy: { employeeCode: 'asc' },
+    })
+  } else if (isAdmin && administeredCompanyIds && administeredCompanyIds.length > 0) {
+    candidateEmployees = await db.employee.findMany({
+      where: {
+        status: 'ACTIVE',
+        assignments: {
+          some: {
+            companyId: { in: administeredCompanyIds },
+          },
         },
-        orderBy: { employeeCode: 'asc' },
-      })
-    : []
+      },
+      select: {
+        id: true,
+        employeeCode: true,
+        designation: true,
+        user: { select: { name: true } },
+      },
+      orderBy: { employeeCode: 'asc' },
+    })
+  }
+
+  const allEmployees = candidateEmployees.map((e) => ({
+    id: e.id,
+    employeeCode: e.employeeCode,
+    designation: e.designation,
+    user: {
+      name: e.user.name,
+      email: '',
+    },
+  }))
 
   return (
     <div className="space-y-4">

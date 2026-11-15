@@ -1,38 +1,40 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
-import { getScopedCompanyIds } from '@/lib/api-auth'
-import { HR_ROLES, AUDIT_ACTIONS, ROLES } from '@/lib/constants'
+import { requirePageAuth } from '@/lib/page-auth'
+import { AUDIT_ACTIONS } from '@/lib/constants'
 import { AuditView } from './audit-view'
 
 export default async function AuditPage() {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-
-  if (!HR_ROLES.includes(session.user.role)) {
-    redirect('/dashboard')
-  }
-
-  const scopedIds = await getScopedCompanyIds({
-    role: session.user.role,
-    userId: session.user.id,
-    employeeId: session.user.employeeId,
-  })
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'])
+  const { role, userId, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
 
   const where: Record<string, unknown> = {}
 
-  if (session.user.role === ROLES.COMPANY_ADMIN || session.user.role === ROLES.HR) {
-    if (scopedIds && scopedIds.length) {
+  if (!isSuperAdmin) {
+    if (administeredCompanyIds && administeredCompanyIds.length > 0) {
       where.OR = [
-        { userId: session.user.id },
-        { user: { employee: { assignments: { some: { companyId: { in: scopedIds } } } } } },
-        { user: { companyScopes: { some: { companyId: { in: scopedIds } } } } },
+        { userId },
+        { user: { employee: { assignments: { some: { companyId: { in: administeredCompanyIds } } } } } },
+        { user: { companyScopes: { some: { companyId: { in: administeredCompanyIds } } } } },
       ]
     } else {
-      where.userId = session.user.id
+      where.userId = userId
     }
   }
+
+  const usersWhere: Record<string, unknown> = isSuperAdmin
+    ? {}
+    : administeredCompanyIds && administeredCompanyIds.length > 0
+      ? {
+          OR: [
+            { id: userId },
+            { employee: { assignments: { some: { companyId: { in: administeredCompanyIds } } } } },
+            { companyScopes: { some: { companyId: { in: administeredCompanyIds } } } },
+          ],
+        }
+      : { id: userId }
 
   const [total, initialLogs, users] = await Promise.all([
     db.auditLog.count({ where }),
@@ -52,16 +54,7 @@ export default async function AuditPage() {
       },
     }),
     db.user.findMany({
-      where:
-        session.user.role === ROLES.COMPANY_ADMIN && scopedIds && scopedIds.length
-          ? {
-              OR: [
-                { id: session.user.id },
-                { employee: { assignments: { some: { companyId: { in: scopedIds } } } } },
-                { companyScopes: { some: { companyId: { in: scopedIds } } } },
-              ],
-            }
-          : {},
+      where: usersWhere,
       select: { id: true, name: true, email: true },
       orderBy: { name: 'asc' },
     }),
@@ -87,4 +80,3 @@ export default async function AuditPage() {
     </div>
   )
 }
-

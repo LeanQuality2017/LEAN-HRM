@@ -1,9 +1,10 @@
+export const dynamic = 'force-dynamic'
+
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { getScopedCompanyIds } from '@/lib/api-auth'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,14 +13,12 @@ import { fmtDate } from '@/lib/constants'
 import { Building2, Users, CalendarCheck, GraduationCap, ArrowRight } from 'lucide-react'
 
 export default async function CompaniesPage() {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-
-  const isSuperAdmin = session.user.role === 'SUPER_ADMIN'
+  const auth = await requirePageAuth()
+  const isSuperAdmin = auth.role === 'SUPER_ADMIN'
   const scopedIds = await getScopedCompanyIds({
-    role: session.user.role,
-    userId: session.user.id,
-    employeeId: session.user.employeeId,
+    role: auth.role,
+    userId: auth.userId,
+    employeeId: auth.employeeId,
   })
 
   if (!isSuperAdmin && (!scopedIds || scopedIds.length === 0)) {

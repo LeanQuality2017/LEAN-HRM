@@ -1,9 +1,9 @@
+export const dynamic = 'force-dynamic'
+
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { getScopedCompanyIds } from '@/lib/api-auth'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -26,8 +26,8 @@ function statusBadge(s: string) {
 }
 
 export default async function PayslipPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, userId, administeredCompanyIds } = auth
 
   const { id } = await params
 
@@ -50,20 +50,14 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
     redirect('/payroll')
   }
 
-  const role = session.user.role
-  const isOwner = payslip.employee.userId === session.user.id
+  const isOwner = payslip.employee.userId === userId
   let isAuthorized = false
 
   if (role === 'SUPER_ADMIN') {
     isAuthorized = true
   } else if (HR_ROLES.includes(role)) {
-    const scopedCompanyIds = await getScopedCompanyIds({
-      role,
-      userId: session.user.id,
-      employeeId: session.user.employeeId,
-    })
     const empCompanyIds = payslip.employee.assignments.map((a) => a.companyId)
-    if (scopedCompanyIds === null || empCompanyIds.some((cid) => scopedCompanyIds.includes(cid))) {
+    if (administeredCompanyIds && empCompanyIds.some((cid) => administeredCompanyIds.includes(cid))) {
       isAuthorized = true
     }
   } else if (isOwner && role !== 'MANAGER') {
