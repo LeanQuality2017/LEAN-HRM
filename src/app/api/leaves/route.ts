@@ -27,6 +27,26 @@ export async function POST(req: Request) {
     if (!body.leaveTypeId || !body.startDate || !body.endDate || !body.reason) {
       throw new ApiError(400, 'leaveTypeId, startDate, endDate, reason are required')
     }
+
+    // Validate leaveTypeId exists and belongs to a company where the target employee is assigned (NEW-07)
+    const leaveType = await db.leaveType.findFirst({
+      where: {
+        id: body.leaveTypeId,
+        company: {
+          assignments: {
+            some: { employeeId: targetEmployeeId },
+          },
+        },
+      },
+    })
+    if (!leaveType) {
+      throw new ApiError(400, 'Invalid leaveTypeId: leave type does not exist or does not belong to employee company')
+    }
+
+    if (HR_ROLES.includes(auth.role) && auth.role !== 'SUPER_ADMIN') {
+      const scopedIds = await getScopedCompanyIds(auth)
+      assertCompanyInScope(leaveType.companyId, scopedIds)
+    }
     const start = new Date(body.startDate)
     const end = new Date(body.endDate)
     start.setHours(0, 0, 0, 0)
