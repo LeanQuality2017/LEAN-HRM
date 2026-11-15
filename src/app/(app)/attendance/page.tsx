@@ -1,14 +1,14 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { AttendanceWidget } from '@/components/attendance-widget'
 import { AttendanceEditButton } from './edit-button'
-import { fmtDate, fmtTime, todayISO, HR_ROLES } from '@/lib/constants'
+import { fmtDate, fmtTime, HR_ROLES } from '@/lib/constants'
 import { CalendarCheck, Download, Search } from 'lucide-react'
 import { PaginationControls } from '@/components/pagination-controls'
 
@@ -22,31 +22,63 @@ function statusBadge(s: string) {
 }
 
 export default async function AttendancePage({ searchParams }: { searchParams: Promise<{ date?: string; companyId?: string; page?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
-  const sp = await searchParams
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, employeeId, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
+  const isCompanyAdminOrHr = role === 'COMPANY_ADMIN' || role === 'HR'
   const isAdmin = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER'].includes(role)
+  const sp = await searchParams
   const page = Math.max(1, parseInt(sp.page || '1', 10) || 1)
   const pageSize = 25
   const skip = (page - 1) * pageSize
 
-  const companies = isAdmin && role !== 'MANAGER'
+  const companies = isSuperAdmin
     ? await db.company.findMany({ select: { id: true, name: true, code: true }, orderBy: { createdAt: 'asc' } })
-    : []
+    : isCompanyAdminOrHr && administeredCompanyIds && administeredCompanyIds.length > 0
+      ? await db.company.findMany({
+          where: { id: { in: administeredCompanyIds } },
+          select: { id: true, name: true, code: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : []
 
   const today = startOfToday()
   const dateFilter = sp.date ? { gte: new Date(sp.date), lt: new Date(new Date(sp.date).getTime() + 86400000) } : undefined
 
   const where: Record<string, unknown> = {}
-  if (isAdmin) {
-    if (role === 'MANAGER' && employeeId) where.employee = { managerId: employeeId }
+
+  if (isSuperAdmin) {
     if (sp.companyId) where.companyId = sp.companyId
-  } else if (employeeId) {
-    where.employeeId = employeeId
+  } else if (isCompanyAdminOrHr) {
+    if (!administeredCompanyIds || administeredCompanyIds.length === 0) {
+      where.id = '__none__'
+    } else {
+      if (sp.companyId && administeredCompanyIds.includes(sp.companyId)) {
+        where.companyId = sp.companyId
+      } else {
+        where.companyId = { in: administeredCompanyIds }
+      }
+    }
+  } else if (role === 'MANAGER') {
+    // C5_ATTENDANCE = KEEP: existing manager reporting line filter
+    if (employeeId) {
+      where.employee = { managerId: employeeId }
+    } else {
+      where.id = '__none__'
+    }
+  } else if (role === 'EMPLOYEE') {
+    if (employeeId) {
+      where.employeeId = employeeId
+    } else {
+      where.id = '__none__'
+    }
+  } else {
+    where.id = '__none__'
   }
-  if (dateFilter) where.date = dateFilter
+
+  if (dateFilter) {
+    where.date = dateFilter
+  }
 
   const [total, records] = await Promise.all([
     db.attendance.count({ where }),
@@ -84,9 +116,9 @@ export default async function AttendancePage({ searchParams }: { searchParams: P
       {isAdmin && (
         <form className="flex flex-wrap items-center gap-2">
           <Input type="date" name="date" defaultValue={sp.date ?? ''} className="w-40" />
-          {(role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN' || role === 'HR') && (
+          {(isSuperAdmin || isCompanyAdminOrHr) && companies.length > 0 && (
             <select name="companyId" defaultValue={sp.companyId ?? ''} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="">All companies</option>
+              <option value="">{isSuperAdmin ? 'All companies' : 'All assigned companies'}</option>
               {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           )}

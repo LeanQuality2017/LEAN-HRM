@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { AddEmployeeButton, EditEmployeeButton } from './actions'
@@ -9,24 +9,45 @@ import { fmtDate, fmtMoney, ROLE_LABELS } from '@/lib/constants'
 import { Users } from 'lucide-react'
 
 export default async function EmployeesPage({ searchParams }: { searchParams?: Promise<{ q?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'])
+  const { role, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
   const sp = searchParams ? await searchParams : {}
   const q = sp.q?.trim()
 
-  const companies = await db.company.findMany({ select: { id: true, name: true, code: true }, orderBy: { createdAt: 'asc' } })
+  const companies = isSuperAdmin
+    ? await db.company.findMany({ select: { id: true, name: true, code: true }, orderBy: { createdAt: 'asc' } })
+    : administeredCompanyIds && administeredCompanyIds.length > 0
+      ? await db.company.findMany({
+          where: { id: { in: administeredCompanyIds } },
+          select: { id: true, name: true, code: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : []
+
+  const searchFilter = q
+    ? {
+        OR: [
+          { employeeCode: { contains: q, mode: 'insensitive' } },
+          { designation: { contains: q, mode: 'insensitive' } },
+          { user: { name: { contains: q, mode: 'insensitive' } } },
+          { user: { email: { contains: q, mode: 'insensitive' } } },
+        ],
+      }
+    : null
+
+  let where: Record<string, unknown> = {}
+  if (isSuperAdmin) {
+    where = searchFilter ?? {}
+  } else if (!administeredCompanyIds || administeredCompanyIds.length === 0) {
+    where = { id: '__none__' }
+  } else {
+    const tenantFilter = { assignments: { some: { companyId: { in: administeredCompanyIds } } } }
+    where = searchFilter ? { AND: [tenantFilter, searchFilter] } : tenantFilter
+  }
+
   const employees = await db.employee.findMany({
-    where: q
-      ? {
-          OR: [
-            { employeeCode: { contains: q, mode: 'insensitive' } },
-            { designation: { contains: q, mode: 'insensitive' } },
-            { user: { name: { contains: q, mode: 'insensitive' } } },
-            { user: { email: { contains: q, mode: 'insensitive' } } },
-          ],
-        }
-      : {},
+    where,
     orderBy: { employeeCode: 'asc' },
     include: {
       user: { select: { name: true, email: true, phone: true, role: true, isActive: true } },
@@ -35,7 +56,10 @@ export default async function EmployeesPage({ searchParams }: { searchParams?: P
       _count: { select: { directReports: true } },
     },
   })
-  const managers = employees.filter((e) => ['MANAGER', 'COMPANY_ADMIN', 'SUPER_ADMIN'].includes(e.user.role)).map((e) => ({ id: e.id, name: e.user.name, code: e.employeeCode }))
+
+  const managers = employees
+    .filter((e) => ['MANAGER', 'COMPANY_ADMIN', 'SUPER_ADMIN'].includes(e.user.role))
+    .map((e) => ({ id: e.id, name: e.user.name, code: e.employeeCode }))
 
   return (
     <div className="space-y-4">

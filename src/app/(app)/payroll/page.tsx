@@ -1,8 +1,8 @@
-import { redirect } from 'next/navigation'
+export const dynamic = 'force-dynamic'
+
 import Link from 'next/link'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,17 +21,38 @@ function statusBadge(s: string) {
 }
 
 export default async function PayrollPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
-  const isAdmin = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'].includes(role)
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, employeeId, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
+  const isCompanyAdminOrHr = role === 'COMPANY_ADMIN' || role === 'HR'
+  const isAdmin = HR_ROLES.includes(role)
   const sp = await searchParams
   const page = Math.max(1, parseInt(sp.page || '1', 10) || 1)
   const pageSize = 25
   const skip = (page - 1) * pageSize
 
-  const where = isAdmin ? {} : employeeId ? { employeeId } : { id: '__none__' }
+  let where: Record<string, unknown> = {}
+  if (isSuperAdmin) {
+    where = {}
+  } else if (isCompanyAdminOrHr) {
+    if (!administeredCompanyIds || administeredCompanyIds.length === 0) {
+      where = { id: '__none__' }
+    } else {
+      where = {
+        employee: {
+          assignments: {
+            some: {
+              companyId: { in: administeredCompanyIds },
+            },
+          },
+        },
+      }
+    }
+  } else if (employeeId) {
+    where = { employeeId }
+  } else {
+    where = { id: '__none__' }
+  }
 
   const [totalCount, totalsAgg, payslips] = await Promise.all([
     db.payroll.count({ where }),

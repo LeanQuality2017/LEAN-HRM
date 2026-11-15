@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,10 +13,10 @@ import { FileText } from 'lucide-react'
 import { PaginationControls } from '@/components/pagination-controls'
 
 export default async function WorkReportsPage({ searchParams }: { searchParams: Promise<{ scope?: string; companyId?: string; page?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, employeeId, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
+  const isCompanyAdminOrHr = role === 'COMPANY_ADMIN' || role === 'HR'
   const sp = await searchParams
   const canReview = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER'].includes(role)
   const scope = sp.scope ?? (canReview ? 'team' : 'mine')
@@ -26,10 +26,33 @@ export default async function WorkReportsPage({ searchParams }: { searchParams: 
 
   const where: Record<string, unknown> = {}
   if (scope === 'mine') {
-    if (employeeId) where.employeeId = employeeId
+    if (employeeId) {
+      where.employeeId = employeeId
+    } else {
+      where.id = '__none__'
+    }
   } else {
-    if (role === 'MANAGER' && employeeId) where.employee = { managerId: employeeId }
-    if (sp.companyId) where.companyId = sp.companyId
+    if (isSuperAdmin) {
+      if (sp.companyId) where.companyId = sp.companyId
+    } else if (isCompanyAdminOrHr) {
+      if (!administeredCompanyIds || administeredCompanyIds.length === 0) {
+        where.id = '__none__'
+      } else {
+        if (sp.companyId && administeredCompanyIds.includes(sp.companyId)) {
+          where.companyId = sp.companyId
+        } else {
+          where.companyId = { in: administeredCompanyIds }
+        }
+      }
+    } else if (role === 'MANAGER') {
+      if (employeeId) {
+        where.employee = { managerId: employeeId }
+      } else {
+        where.id = '__none__'
+      }
+    } else {
+      where.id = '__none__'
+    }
   }
 
   const [total, unreviewed, reports] = await Promise.all([
