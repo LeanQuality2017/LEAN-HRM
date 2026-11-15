@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ReviewButtons } from './review-buttons'
@@ -10,17 +10,46 @@ import { CalendarX } from 'lucide-react'
 import { PaginationControls } from '@/components/pagination-controls'
 
 export default async function LeaveApprovalsPage({ searchParams }: { searchParams?: Promise<{ page?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER'])
+  const { role, employeeId, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
+  const isCompanyAdminOrHr = role === 'COMPANY_ADMIN' || role === 'HR'
   const sp = searchParams ? await searchParams : {}
   const page = Math.max(1, parseInt(sp.page || '1', 10) || 1)
   const pageSize = 25
   const skip = (page - 1) * pageSize
 
-  const where: Record<string, unknown> = { status: 'PENDING' }
-  if (role === 'MANAGER' && employeeId) where.employee = { managerId: employeeId }
+  let where: Record<string, unknown> = { status: 'PENDING' }
+
+  if (isSuperAdmin) {
+    where = { status: 'PENDING' }
+  } else if (isCompanyAdminOrHr) {
+    if (!administeredCompanyIds || administeredCompanyIds.length === 0) {
+      where = { id: '__none__' }
+    } else {
+      where = {
+        status: 'PENDING',
+        employee: {
+          assignments: {
+            some: {
+              companyId: { in: administeredCompanyIds },
+            },
+          },
+        },
+      }
+    }
+  } else if (role === 'MANAGER') {
+    if (employeeId) {
+      where = {
+        status: 'PENDING',
+        employee: { managerId: employeeId },
+      }
+    } else {
+      where = { id: '__none__' }
+    }
+  } else {
+    where = { id: '__none__' }
+  }
 
   const [total, requests] = await Promise.all([
     db.leaveRequest.count({ where }),

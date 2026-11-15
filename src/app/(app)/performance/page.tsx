@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -11,41 +11,100 @@ import { fmtDate } from '@/lib/constants'
 import { Target } from 'lucide-react'
 
 export default async function PerformancePage() {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, employeeId, administeredCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
+  const isCompanyAdminOrHr = role === 'COMPANY_ADMIN' || role === 'HR'
   const isManager = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER'].includes(role)
 
-  const NO_MATCH = { id: '__none__' } // safe empty filter for roles without employee record
-  const reviewWhere = isManager
-    ? role === 'MANAGER' && employeeId
-      ? { employee: { managerId: employeeId } }
-      : {}
-    : employeeId
-      ? { employeeId }
-      : NO_MATCH
-  const kpiWhere = isManager
-    ? role === 'MANAGER' && employeeId
-      ? { employee: { managerId: employeeId } }
-      : {}
-    : employeeId
-      ? { employeeId }
-      : NO_MATCH
+  let reviewWhere: Record<string, unknown> = {}
+  let kpiWhere: Record<string, unknown> = {}
+  let empWhere: Record<string, unknown> | null = null
+
+  if (isSuperAdmin) {
+    reviewWhere = {}
+    kpiWhere = {}
+    empWhere = { status: 'ACTIVE' }
+  } else if (isCompanyAdminOrHr) {
+    if (administeredCompanyIds && administeredCompanyIds.length > 0) {
+      reviewWhere = {
+        employee: {
+          assignments: {
+            some: {
+              companyId: { in: administeredCompanyIds },
+            },
+          },
+        },
+      }
+      kpiWhere = {
+        employee: {
+          assignments: {
+            some: {
+              companyId: { in: administeredCompanyIds },
+            },
+          },
+        },
+      }
+      empWhere = {
+        status: 'ACTIVE',
+        assignments: {
+          some: {
+            companyId: { in: administeredCompanyIds },
+          },
+        },
+      }
+    } else {
+      reviewWhere = { id: '__none__' }
+      kpiWhere = { id: '__none__' }
+      empWhere = { id: '__none__' }
+    }
+  } else if (role === 'MANAGER') {
+    if (employeeId) {
+      reviewWhere = { employee: { managerId: employeeId } }
+      kpiWhere = { employee: { managerId: employeeId } }
+      empWhere = { status: 'ACTIVE', managerId: employeeId }
+    } else {
+      reviewWhere = { id: '__none__' }
+      kpiWhere = { id: '__none__' }
+      empWhere = { id: '__none__' }
+    }
+  } else if (role === 'EMPLOYEE') {
+    if (employeeId) {
+      reviewWhere = { employeeId }
+      kpiWhere = { employeeId }
+      empWhere = null
+    } else {
+      reviewWhere = { id: '__none__' }
+      kpiWhere = { id: '__none__' }
+      empWhere = null
+    }
+  } else {
+    reviewWhere = { id: '__none__' }
+    kpiWhere = { id: '__none__' }
+    empWhere = null
+  }
 
   const [reviews, kpis, employees] = await Promise.all([
     db.performanceReview.findMany({
-      where: reviewWhere, orderBy: { createdAt: 'desc' }, take: 100,
-      include: { employee: { select: { employeeCode: true, user: { select: { name: true } } } }, reviewer: { select: { name: true } } },
+      where: reviewWhere,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        employee: { select: { employeeCode: true, user: { select: { name: true } } } },
+        reviewer: { select: { name: true } },
+      },
     }),
     db.kPI.findMany({
-      where: kpiWhere, orderBy: { period: 'desc' }, take: 100,
+      where: kpiWhere,
+      orderBy: { period: 'desc' },
+      take: 100,
       include: { employee: { select: { employeeCode: true, user: { select: { name: true } } } } },
     }),
-    isManager
+    empWhere
       ? db.employee.findMany({
-          where: role === 'MANAGER' && employeeId ? { managerId: employeeId } : { status: 'ACTIVE' },
+          where: empWhere,
           select: { id: true, employeeCode: true, user: { select: { name: true } } },
+          orderBy: { employeeCode: 'asc' },
         })
       : Promise.resolve([]),
   ])

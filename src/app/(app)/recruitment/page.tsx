@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -11,28 +11,57 @@ import { Briefcase } from 'lucide-react'
 import { PaginationControls } from '@/components/pagination-controls'
 
 export default async function RecruitmentPage({ searchParams }: { searchParams?: Promise<{ page?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, administeredCompanyIds, employedCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
+  const isCompanyAdminOrHr = role === 'COMPANY_ADMIN' || role === 'HR'
   const sp = searchParams ? await searchParams : {}
   const page = Math.max(1, parseInt(sp.page || '1', 10) || 1)
   const pageSize = 25
   const skip = (page - 1) * pageSize
 
-  // SUPER_ADMIN + management roles without an employee record see all companies
-  const companies = (role === 'SUPER_ADMIN' || !employeeId)
-    ? await db.company.findMany({ select: { id: true, name: true }, orderBy: { createdAt: 'asc' } })
-    : await db.company.findMany({
-        where: { assignments: { some: { employeeId } } },
+  let companies: { id: string; name: string }[] = []
+  let jobWhere: Record<string, unknown> = {}
+  let appWhere: Record<string, unknown> = {}
+
+  if (isSuperAdmin) {
+    companies = await db.company.findMany({ select: { id: true, name: true }, orderBy: { createdAt: 'asc' } })
+    jobWhere = {}
+    appWhere = {}
+  } else if (isCompanyAdminOrHr) {
+    if (administeredCompanyIds && administeredCompanyIds.length > 0) {
+      companies = await db.company.findMany({
+        where: { id: { in: administeredCompanyIds } },
         select: { id: true, name: true },
+        orderBy: { createdAt: 'asc' },
       })
-  const companyIds = companies.map((c) => c.id)
-  const appWhere = role === 'SUPER_ADMIN' ? {} : { jobOpening: { companyId: { in: companyIds } } }
+      jobWhere = { companyId: { in: administeredCompanyIds } }
+      appWhere = { jobOpening: { companyId: { in: administeredCompanyIds } } }
+    } else {
+      companies = []
+      jobWhere = { id: '__none__' }
+      appWhere = { id: '__none__' }
+    }
+  } else {
+    // MANAGER / EMPLOYEE: bounded by active employed companies
+    if (employedCompanyIds && employedCompanyIds.length > 0) {
+      companies = await db.company.findMany({
+        where: { id: { in: employedCompanyIds } },
+        select: { id: true, name: true },
+        orderBy: { createdAt: 'asc' },
+      })
+      jobWhere = { companyId: { in: employedCompanyIds } }
+      appWhere = { jobOpening: { companyId: { in: employedCompanyIds } } }
+    } else {
+      companies = []
+      jobWhere = { id: '__none__' }
+      appWhere = { id: '__none__' }
+    }
+  }
 
   const [jobs, totalApps, applications, stageGroups] = await Promise.all([
     db.jobOpening.findMany({
-      where: role === 'SUPER_ADMIN' ? {} : { companyId: { in: companyIds } },
+      where: jobWhere,
       orderBy: { createdAt: 'desc' },
       include: { company: { select: { code: true } }, _count: { select: { applications: true } } },
     }),
