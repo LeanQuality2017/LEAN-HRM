@@ -186,23 +186,18 @@ export async function PATCH(req: Request) {
     })
     if (!employee) throw new ApiError(404, 'Employee not found')
 
+    const currentAssignmentCompanyIds = employee.assignments.map((a) => a.companyId)
+
     // Section 6.C: Target Current Company Verification
     // Verify that the employee currently belongs to at least one company within caller's administered scope
     if (administeredIds) {
-      const hasCurrentAdministeredCompany = employee.assignments.some((a) => administeredIds.includes(a.companyId))
+      const hasCurrentAdministeredCompany = currentAssignmentCompanyIds.some((cid) => administeredIds.includes(cid))
       if (!hasCurrentAdministeredCompany) {
         throw new ApiError(403, 'Forbidden: employee out of administrative scope')
       }
     }
 
-    // Validate any proposed new employment company assignments against caller's administered scope
-    if (Array.isArray(body.companyIds) && body.companyIds.length) {
-      for (const cid of body.companyIds) {
-        assertCompanyInScope(cid, administeredIds)
-      }
-    }
-
-    // Section 7: NEW-01 Self-Edit Restrictions (HR + COMPANY_ADMIN)
+    // Correction C: Complete NEW-01 Self-Edit Restrictions (HR + COMPANY_ADMIN)
     // HR and COMPANY_ADMIN users must not edit their own sensitive employee fields through administrative management endpoints
     const isSelf = auth.userId === employee.userId || (auth.employeeId && auth.employeeId === employee.id)
     if (isSelf && auth.role !== 'SUPER_ADMIN') {
@@ -213,11 +208,73 @@ export async function PATCH(req: Request) {
         'role',
         'companyIds',
         'administeredCompanyIds',
+        'managerId',
+        'isActive',
       ]
       for (const field of forbiddenSelfFields) {
         if ((body as any)[field] !== undefined) {
           throw new ApiError(403, `Forbidden: ${auth.role} cannot self-modify sensitive field '${field}'`)
         }
+      }
+    }
+
+    // Correction D: Global-Field Protection for Shared Employees
+    // Identify all mutable global Employee and User fields
+    const globalFields = [
+      'baseSalary',
+      'designation',
+      'status',
+      'managerId',
+      'name',
+      'phone',
+      'role',
+      'isActive',
+      'password',
+      'administeredCompanyIds',
+    ] as const
+
+    const hasGlobalMutation = globalFields.some((f) => (body as any)[f] !== undefined)
+    const isPartialScopeAdmin =
+      administeredIds !== null &&
+      !currentAssignmentCompanyIds.every((cid) => administeredIds.includes(cid))
+
+    if (hasGlobalMutation && isPartialScopeAdmin) {
+      throw new ApiError(
+        403,
+        'Forbidden: cannot modify global employee fields for a shared employee without administrative scope over all assigned companies'
+      )
+    }
+
+    // Correction D: Scoped Assignment Updates Preserving Outside-Scope Assignments
+    let toDeleteCompanyIds: string[] = []
+    let toAddCompanyIds: string[] = []
+
+    if (Array.isArray(body.companyIds)) {
+      const requestedCompanyIds = Array.from(new Set(body.companyIds))
+      const currentOutsideScopeCompanyIds = currentAssignmentCompanyIds.filter(
+        (cid) => administeredIds !== null && !administeredIds.includes(cid)
+      )
+
+      // Reject attempts to add an assignment to a company outside caller's administrative scope
+      for (const cid of requestedCompanyIds) {
+        if (!currentOutsideScopeCompanyIds.includes(cid)) {
+          assertCompanyInScope(cid, administeredIds)
+        }
+      }
+
+      if (administeredIds === null) {
+        // SUPER_ADMIN has global scope over all companies
+        toDeleteCompanyIds = currentAssignmentCompanyIds.filter((cid) => !requestedCompanyIds.includes(cid))
+        toAddCompanyIds = requestedCompanyIds.filter((cid) => !currentAssignmentCompanyIds.includes(cid))
+      } else {
+        // Partial-scope administrator:
+        // Caller may only add or remove assignments within companies they are authorized to administer.
+        // All assignments outside caller's administrative scope are preserved.
+        const requestedInScope = requestedCompanyIds.filter((cid) => administeredIds.includes(cid))
+        toDeleteCompanyIds = currentAssignmentCompanyIds.filter(
+          (cid) => administeredIds.includes(cid) && !requestedInScope.includes(cid)
+        )
+        toAddCompanyIds = requestedInScope.filter((cid) => !currentAssignmentCompanyIds.includes(cid))
       }
     }
 
@@ -291,9 +348,10 @@ export async function PATCH(req: Request) {
         await tx.user.update({ where: { id: employee.userId }, data: userUpdate })
       }
 
-      // Transactional Scope Synchronization:
+      // Correction B: Transactional Scope Synchronization:
       // Promotion: assign new scopes
-      // Demotion (TS-04): revoke all administrative scopes in same transaction
+      // Demotion: whenever transitioning from HR or COMPANY_ADMIN to ANY non-administrative role,
+      // revoke all UserCompanyScope records in the same transaction
       if (newRole !== undefined && newRole !== currentRole) {
         if (newRole === 'COMPANY_ADMIN' || newRole === 'HR') {
           await tx.userCompanyScope.deleteMany({ where: { userId: employee.userId } })
@@ -302,7 +360,8 @@ export async function PATCH(req: Request) {
               data: syncAdminScopes.map((cid: string) => ({ userId: employee.userId, companyId: cid })),
             })
           }
-        } else if ((currentRole === 'COMPANY_ADMIN' || currentRole === 'HR') && (newRole === 'EMPLOYEE' || newRole === 'MANAGER')) {
+        } else if (currentRole === 'COMPANY_ADMIN' || currentRole === 'HR') {
+          // Demoted to non-administrative role (EMPLOYEE, MANAGER, STUDENT, etc.)
           await tx.userCompanyScope.deleteMany({ where: { userId: employee.userId } })
         }
       } else if (syncAdminScopes !== null) {
@@ -314,11 +373,31 @@ export async function PATCH(req: Request) {
         }
       }
 
-      if (Array.isArray(body.companyIds) && body.companyIds.length) {
-        await tx.employeeCompanyAssignment.deleteMany({ where: { employeeId: id } })
-        await tx.employeeCompanyAssignment.createMany({
-          data: body.companyIds.map((cid: string, i: number) => ({ employeeId: id, companyId: cid, isPrimary: i === 0 })),
-        })
+      // Correction D: Scoped assignment updates preserving outside-scope assignments
+      if (Array.isArray(body.companyIds)) {
+        if (toDeleteCompanyIds.length > 0) {
+          await tx.employeeCompanyAssignment.deleteMany({
+            where: { employeeId: id, companyId: { in: toDeleteCompanyIds } },
+          })
+        }
+        if (toAddCompanyIds.length > 0) {
+          await tx.employeeCompanyAssignment.createMany({
+            data: toAddCompanyIds.map((cid: string) => ({
+              employeeId: id,
+              companyId: cid,
+              isPrimary: false,
+            })),
+          })
+        }
+
+        // Ensure at least one remaining assignment is designated as primary
+        const remaining = await tx.employeeCompanyAssignment.findMany({ where: { employeeId: id } })
+        if (remaining.length > 0 && !remaining.some((a) => a.isPrimary)) {
+          await tx.employeeCompanyAssignment.update({
+            where: { id: remaining[0].id },
+            data: { isPrimary: true },
+          })
+        }
       }
 
       if (body.role !== undefined) {

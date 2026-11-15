@@ -1,17 +1,31 @@
 import { db } from '@/lib/db'
-import { requireAuth, handle, ApiError, getScopedCompanyIds, assertInstituteInScope } from '@/lib/api-auth'
+import { requireAuth, handle, ApiError, getAdministeredCompanyIds, assertInstituteInScope } from '@/lib/api-auth'
 import { hashPassword } from '@/lib/password'
 import { ROLES, STUDENT_STATUS } from '@/lib/constants'
 import { validateBody, studentCreateSchema, studentUpdateSchema } from '@/lib/validation'
 
-// GET /api/students - list institute students
+// GET /api/students - list institute students (admin sees all institute students; student sees own record only)
 export async function GET() {
   return handle(async () => {
     const auth = await requireAuth()
-    const scopedIds = await getScopedCompanyIds(auth)
-    await assertInstituteInScope(scopedIds)
+
+    const where: Record<string, unknown> = {}
+
+    if (auth.role === ROLES.STUDENT) {
+      where.userId = auth.userId
+    } else if (
+      auth.role === ROLES.SUPER_ADMIN ||
+      auth.role === ROLES.COMPANY_ADMIN ||
+      auth.role === ROLES.HR
+    ) {
+      const administeredIds = await getAdministeredCompanyIds(auth)
+      await assertInstituteInScope(administeredIds)
+    } else {
+      throw new ApiError(403, 'Forbidden: insufficient permissions')
+    }
 
     const data = await db.student.findMany({
+      where,
       orderBy: { code: 'asc' },
       include: {
         enrollments: { include: { batch: { include: { course: true } } } },
@@ -26,8 +40,8 @@ export async function GET() {
 export async function POST(req: Request) {
   return handle(async () => {
     const auth = await requireAuth([ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.HR])
-    const scopedIds = await getScopedCompanyIds(auth)
-    await assertInstituteInScope(scopedIds)
+    const administeredIds = await getAdministeredCompanyIds(auth)
+    await assertInstituteInScope(administeredIds)
 
     const body = validateBody(studentCreateSchema, await req.json())
 
@@ -87,8 +101,8 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   return handle(async () => {
     const auth = await requireAuth([ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.HR])
-    const scopedIds = await getScopedCompanyIds(auth)
-    await assertInstituteInScope(scopedIds)
+    const administeredIds = await getAdministeredCompanyIds(auth)
+    await assertInstituteInScope(administeredIds)
 
     const url = new URL(req.url)
     const id = url.searchParams.get('id')
