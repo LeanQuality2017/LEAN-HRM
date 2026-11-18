@@ -18,8 +18,9 @@ Create `.env` adjacent to `docker-compose.yml`:
 ## 3. Deployment Commands
 ```bash
 docker compose up -d db migrate app                    # Boot DB, run migrations, start app
-docker compose run --rm migrate npx tsx prisma/seed.ts # Optional demo dataset seed
 ```
+> [!CAUTION]
+> Do NOT run `prisma/seed.ts` in production. Demo seeds are destructive (they truncate all public tables and install shared demo credentials) and are strictly prohibited in production. Demo seeding is restricted to disposable demo/test databases with `ALLOW_DEMO_SEED=true`.
 
 ## 4. Health & Status Check
 ```bash

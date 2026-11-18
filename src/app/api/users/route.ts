@@ -1,37 +1,18 @@
 import { db } from '@/lib/db'
-import { requireAuth, handle, ApiError, getAdministeredCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
+import { requireAuth, handle, ApiError } from '@/lib/api-auth'
 import { hashPassword } from '@/lib/password'
-import { AUDIT_ACTIONS } from '@/lib/constants'
+import { AUDIT_ACTIONS, ROLES } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { validateBody, userCreateSchema } from '@/lib/validation'
 
-// POST /api/users - credential provisioning (admin-only)
+// POST /api/users - credential provisioning (SUPER_ADMIN only)
 export async function POST(req: Request) {
   return handle(async () => {
-    const auth = await requireAuth(['SUPER_ADMIN', 'COMPANY_ADMIN'])
+    const auth = await requireAuth([ROLES.SUPER_ADMIN])
     const body = validateBody(userCreateSchema, await req.json())
     const { name, email, role, password, companyId, companyIds, employeeCode, designation, baseSalary, phone } = body
 
-    const administeredIds = await getAdministeredCompanyIds(auth)
     const targetAdminCompanyIds: string[] = Array.isArray(companyIds) && companyIds.length > 0 ? companyIds : [companyId]
-
-    // Authorization & Hierarchy Rules
-    if (auth.role === 'COMPANY_ADMIN') {
-      // Must be within their own administered scope
-      assertCompanyInScope(companyId, administeredIds)
-      for (const cid of targetAdminCompanyIds) {
-        assertCompanyInScope(cid, administeredIds)
-      }
-      // Cannot create SUPER_ADMIN or COMPANY_ADMIN
-      if (role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN') {
-        throw new ApiError(403, 'Forbidden: Company Admin can only create HR, Manager, or Employee roles')
-      }
-      if (!['HR', 'MANAGER', 'EMPLOYEE'].includes(role)) {
-        throw new ApiError(400, 'Invalid role for Company Admin provisioning')
-      }
-    } else if (auth.role === 'SUPER_ADMIN') {
-      // SUPER_ADMIN has global scope (administeredIds === null)
-    }
 
     const cleanEmail = email.toLowerCase().trim()
     const existingUser = await db.user.findUnique({ where: { email: cleanEmail } })

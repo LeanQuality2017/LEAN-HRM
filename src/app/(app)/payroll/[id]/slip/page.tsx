@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { db } from '@/lib/db'
 import { requirePageAuth } from '@/lib/page-auth'
+import { isPayrollEnabled } from '@/lib/feature-gates'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -26,6 +27,9 @@ function statusBadge(s: string) {
 }
 
 export default async function PayslipPage({ params }: { params: Promise<{ id: string }> }) {
+  if (!isPayrollEnabled()) {
+    redirect('/dashboard')
+  }
   const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
   const { role, userId, administeredCompanyIds } = auth
 
@@ -112,7 +116,7 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
           <div className="flex justify-between items-start border-b pb-4">
             <div>
               <h2 className="text-xl font-bold text-foreground">{company?.name || 'UniHR'}</h2>
-              {company?.code && <p className="text-xs text-muted-foreground uppercase tracking-wider">Company Code: {company.code}</p>}
+              {company?.code && <p className="text-xs text-muted-foreground uppercase tracking-wider">Current Primary Assignment: {company.code} (Historical Issuer Unrecorded)</p>}
               {company?.address && <p className="text-xs text-muted-foreground mt-0.5">{company.address}</p>}
               <div className="text-xs text-muted-foreground flex gap-3 mt-1">
                 {company?.phone && <span>Tel: {company.phone}</span>}

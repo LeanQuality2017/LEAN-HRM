@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getAdministeredCompanyIds, assertInstituteInScope } from '@/lib/api-auth'
+import { isInstituteEnabled } from '@/lib/feature-gates'
 import { hashPassword } from '@/lib/password'
 import { ROLES, STUDENT_STATUS } from '@/lib/constants'
 import { validateBody, studentCreateSchema, studentUpdateSchema } from '@/lib/validation'
@@ -8,6 +9,9 @@ import { validateBody, studentCreateSchema, studentUpdateSchema } from '@/lib/va
 export async function GET() {
   return handle(async () => {
     const auth = await requireAuth()
+    if (!isInstituteEnabled()) {
+      throw new ApiError(403, 'Institute module is disabled outside approved demo environments')
+    }
 
     const where: Record<string, unknown> = {}
 
@@ -40,6 +44,9 @@ export async function GET() {
 export async function POST(req: Request) {
   return handle(async () => {
     const auth = await requireAuth([ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.HR])
+    if (!isInstituteEnabled()) {
+      throw new ApiError(403, 'Institute module is disabled outside approved demo environments')
+    }
     const administeredIds = await getAdministeredCompanyIds(auth)
     await assertInstituteInScope(administeredIds)
 

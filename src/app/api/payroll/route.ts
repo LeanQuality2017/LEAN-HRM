@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
-import { HR_ROLES, PAYROLL_STATUS, PAYROLL_STATUSES, AUDIT_ACTIONS } from '@/lib/constants'
+import { isPayrollEnabled } from '@/lib/feature-gates'
+import { HR_ROLES, PAYROLL_STATUS, PAYROLL_STATUSES, AUDIT_ACTIONS, ROLES } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { validateBody, payrollCreateSchema, payrollUpdateSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
@@ -9,6 +10,9 @@ import { parsePaginationParams } from '@/lib/pagination'
 export async function GET(req: Request) {
   return handle(async () => {
     const auth = await requireAuth()
+    if (!isPayrollEnabled()) {
+      return Response.json({ ok: true, data: [], page: 1, pageSize: 25, total: 0 })
+    }
     const url = new URL(req.url)
     const companyId = url.searchParams.get('companyId')
     const month = url.searchParams.get('month')
@@ -70,6 +74,12 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   return handle(async () => {
     const auth = await requireAuth(HR_ROLES)
+    if (!isPayrollEnabled()) {
+      throw new ApiError(
+        403,
+        'Payroll generation is disabled outside approved demo environments until durable legal-entity and pay rules are configured'
+      )
+    }
     const body = validateBody(payrollCreateSchema, await req.json())
     const month = Number(body.month), year = Number(body.year)
 
@@ -120,10 +130,16 @@ export async function POST(req: Request) {
   })
 }
 
-// PATCH /api/payroll?id= - update draft or mark PROCESSED/PAID (HR+)
+// PATCH /api/payroll?id= - update draft or mark PROCESSED/PAID (SUPER_ADMIN only)
 export async function PATCH(req: Request) {
   return handle(async () => {
-    const auth = await requireAuth(HR_ROLES)
+    const auth = await requireAuth([ROLES.SUPER_ADMIN])
+    if (!isPayrollEnabled()) {
+      throw new ApiError(
+        403,
+        'Payroll modification is disabled outside approved demo environments until durable legal-entity and pay rules are configured'
+      )
+    }
     const url = new URL(req.url)
     const id = url.searchParams.get('id')
     if (!id) throw new ApiError(400, 'id required')

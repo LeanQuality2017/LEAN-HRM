@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds } from '@/lib/api-auth'
+import { isPayrollEnabled, isInstituteEnabled } from '@/lib/feature-gates'
 import { HR_ROLES, AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { EXPORT_TYPES, exportQuerySchema, formatCsvCell } from '@/lib/validation'
@@ -93,6 +94,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
         formatCsvCell(r.source),
       ].join(','))
     } else if (type === 'payroll') {
+      if (!isPayrollEnabled()) {
+        throw new ApiError(
+          403,
+          'Forbidden: payroll export is disabled outside approved demo environments until durable legal-entity and pay rules are configured'
+        )
+      }
       header = ['month', 'year', 'employeeCode', 'name', 'basic', 'allowances', 'deductions', 'netPay', 'status', 'paidAt']
       const where: Record<string, unknown> = {}
       if (scopedIds) {
@@ -129,10 +136,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
         formatCsvCell(r.paidAt ? r.paidAt.toISOString() : ''),
       ].join(','))
     } else if (type === 'students') {
+      if (!isInstituteEnabled()) {
+        throw new ApiError(403, 'Forbidden: institute student export is disabled outside approved demo environments')
+      }
       header = ['code', 'name', 'email', 'phone', 'qualification', 'status', 'course', 'batch', 'enrolledAt']
 
       const institute = await db.company.findFirst({ where: { type: 'INSTITUTE' }, select: { id: true } })
-      if (scopedIds && institute && !scopedIds.includes(institute.id)) {
+      if (!institute || (scopedIds && !scopedIds.includes(institute.id))) {
         // Staff without institute scope see 0 rows
         rowCount = 0
         dataLines = []
@@ -185,10 +195,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
         })
       }
     } else if (type === 'fees') {
+      if (!isInstituteEnabled()) {
+        throw new ApiError(403, 'Forbidden: institute fee export is disabled outside approved demo environments')
+      }
       header = ['invoiceNo', 'paidAt', 'studentCode', 'studentName', 'amount', 'method', 'receivedBy', 'note']
 
       const institute = await db.company.findFirst({ where: { type: 'INSTITUTE' }, select: { id: true } })
-      if (scopedIds && institute && !scopedIds.includes(institute.id)) {
+      if (!institute || (scopedIds && !scopedIds.includes(institute.id))) {
         // Staff without institute scope see 0 rows
         rowCount = 0
         dataLines = []

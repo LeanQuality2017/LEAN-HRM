@@ -38,6 +38,10 @@ export const authOptions: NextAuthOptions = {
       name: 'Credentials',
       credentials: { email: { label: 'Email' }, password: { label: 'Password' } },
       async authorize(credentials, req) {
+        if (process.env.NODE_ENV === 'production' && !process.env.NEXTAUTH_URL?.startsWith('https://')) {
+          throw new Error('FATAL: NEXTAUTH_URL must be a canonical HTTPS URL in production.')
+        }
+
         if (!credentials?.email || !credentials?.password) return null
 
         const ip = getClientIp(req)

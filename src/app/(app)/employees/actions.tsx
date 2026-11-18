@@ -139,7 +139,7 @@ export function EditEmployeeButton({ employee, companies }: {
   const [companyIds, setCompanyIds] = useState<string[]>(employee.companyIds)
   const [form, setForm] = useState({
     name: employee.name, phone: employee.phone ?? '', role: employee.role,
-    designation: employee.designation, baseSalary: String(employee.baseSalary), status: employee.status, password: '',
+    designation: employee.designation, baseSalary: String(employee.baseSalary), status: employee.status,
   })
 
   function toggleCompany(id: string) {
@@ -157,13 +157,10 @@ export function EditEmployeeButton({ employee, companies }: {
     if (Number(form.baseSalary) > 9999999999.99) {
       return toast({ title: 'Error', description: 'Salary cannot exceed 9,999,999,999.99', variant: 'destructive' })
     }
-    if (form.password && (form.password.length < 8 || !/[a-zA-Z]/.test(form.password) || !/\d/.test(form.password))) {
-      return toast({ title: 'Error', description: 'Password must be 8+ characters with at least one letter and one digit.', variant: 'destructive' })
-    }
     setLoading(true)
     const res = await fetch(`/api/employees?id=${employee.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, baseSalary: Number(form.baseSalary) || 0, companyIds, password: form.password || undefined }),
+      body: JSON.stringify({ ...form, baseSalary: Number(form.baseSalary) || 0, companyIds }),
     })
     const json = await res.json()
     setLoading(false)
@@ -219,10 +216,6 @@ export function EditEmployeeButton({ employee, companies }: {
                 </button>
               ))}
             </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Reset Password</Label>
-            <Input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Leave blank to keep current" />
           </div>
           <Button onClick={submit} disabled={loading} className="w-full bg-teal-700 hover:bg-teal-800">
             {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />} Save Changes

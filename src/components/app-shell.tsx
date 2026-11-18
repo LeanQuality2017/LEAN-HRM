@@ -47,13 +47,28 @@ const NAV = [
 ]
 
 export function AppShell({
-  user, companies, unreadCount, children,
-}: { user: ShellUser; companies: ShellCompany[]; unreadCount: number; children: React.ReactNode }) {
+  user, companies, unreadCount, enabledModules, children,
+}: {
+  user: ShellUser
+  companies: ShellCompany[]
+  unreadCount: number
+  enabledModules?: { payroll?: boolean; institute?: boolean }
+  children: React.ReactNode
+}) {
   const pathname = usePathname()
   const router = useRouter()
   const [open, setOpen] = useState(false)
 
-  const items = NAV.filter((n) => n.roles.includes(user.role))
+  const isPayrollActive = enabledModules?.payroll ?? false
+  const isInstituteActive = enabledModules?.institute ?? false
+
+  const items = NAV.filter((n) => {
+    if (!n.roles.includes(user.role)) return false
+    if (n.href === '/payroll' && !isPayrollActive) return false
+    if (n.href?.startsWith('/institute') && !isInstituteActive) return false
+    if (!n.href && n.label === 'Institute' && !isInstituteActive) return false
+    return true
+  })
 
   const nav = (
     <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">

@@ -229,7 +229,6 @@ export async function PATCH(req: Request) {
       'phone',
       'role',
       'isActive',
-      'password',
       'administeredCompanyIds',
     ] as const
 
@@ -341,9 +340,6 @@ export async function PATCH(req: Request) {
       if (body.phone !== undefined) userUpdate.phone = body.phone
       if (body.role !== undefined) userUpdate.role = body.role
       if (body.isActive !== undefined) userUpdate.isActive = Boolean(body.isActive)
-      if (body.password) {
-        userUpdate.passwordHash = hashPassword(body.password)
-      }
       if (Object.keys(userUpdate).length) {
         await tx.user.update({ where: { id: employee.userId }, data: userUpdate })
       }

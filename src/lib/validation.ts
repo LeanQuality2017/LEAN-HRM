@@ -230,7 +230,7 @@ export const employeeUpdateSchema = z.object({
   managerId: shortString.nullish(),
   isActive: z.boolean().optional(),
   status: shortString.optional(),
-  password: passwordSchema.optional(),
+  password: z.never({ message: 'Password cannot be modified via employee update. Use the dedicated password reset endpoint.' }).optional(),
   role: roleEnum.optional(),
   companyIds: z.array(shortString).optional(),
   administeredCompanyIds: z.array(shortString).optional(),

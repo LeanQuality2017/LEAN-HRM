@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { isPayrollEnabled, isInstituteEnabled } from '@/lib/feature-gates'
 
 // Shared page access check returning redirect target or null if permitted
 export function checkPageAccess(role: string, pathname: string): string | null {
@@ -49,17 +50,23 @@ export function checkPageAccess(role: string, pathname: string): string | null {
     return null
   }
 
-  // /payroll -> staff roles (employees can view their own payslips, HR can manage)
+  // /payroll -> gated unless enabled; staff roles (employees can view their own payslips, HR can manage)
   if (path === '/payroll' || path.startsWith('/payroll/')) {
+    if (!isPayrollEnabled()) {
+      return '/dashboard'
+    }
     if (!['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'].includes(role)) {
       return '/dashboard'
     }
     return null
   }
 
-  // /institute/* -> SUPER_ADMIN + COMPANY_ADMIN
+  // /institute/* -> gated unless enabled; SUPER_ADMIN + COMPANY_ADMIN + HR
   if (path === '/institute' || path.startsWith('/institute/')) {
-    if (!['SUPER_ADMIN', 'COMPANY_ADMIN'].includes(role)) {
+    if (!isInstituteEnabled()) {
+      return '/dashboard'
+    }
+    if (!['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'].includes(role)) {
       return '/dashboard'
     }
     return null

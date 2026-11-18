@@ -22,6 +22,36 @@ function at(base: Date, h: number, m = 0): Date {
 }
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('❌ FATAL: Demo seed refused in production environment.')
+    process.exit(1)
+  }
+
+  if (process.env.ALLOW_DEMO_SEED !== 'true') {
+    console.error(
+      '❌ FATAL: Demo seed refused. Seeding truncates all database tables and installs shared demo passwords.\n' +
+      'To seed a confirmed disposable demo or test database, explicitly set ALLOW_DEMO_SEED=true.'
+    )
+    process.exit(1)
+  }
+
+  let currentDb = ''
+  try {
+    const rawDb = await db.$queryRaw<Array<{ current_database: string }>>`SELECT current_database();`
+    currentDb = rawDb?.[0]?.current_database ?? ''
+  } catch (err) {
+    console.error('❌ FATAL: Unable to query current database name:', err)
+    process.exit(1)
+  }
+
+  const allowlist = /^(unihr_(test|demo)|[a-z0-9_]+_demo)$/
+  if (!allowlist.test(currentDb)) {
+    console.error(
+      `❌ FATAL: Demo seed refused. Connected database "${currentDb}" is not an authorized test or demo database (must match ^(unihr_(test|demo)|[a-z0-9_]+_demo)$).`
+    )
+    process.exit(1)
+  }
+
   console.log('🌱 Clearing old data...')
   await db.$transaction([
     db.auditLog.deleteMany(), db.notification.deleteMany(), db.announcement.deleteMany(), db.placement.deleteMany(),

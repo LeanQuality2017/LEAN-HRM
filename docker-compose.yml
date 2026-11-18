@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: unihr
       POSTGRES_DB: unihr
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -47,7 +47,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://unihr:unihr@db:5432/unihr?schema=public&sslmode=disable
-      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - BIOMETRIC_API_KEY=${BIOMETRIC_API_KEY}
 volumes:

@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertInstituteInScope } from '@/lib/api-auth'
+import { isInstituteEnabled } from '@/lib/feature-gates'
 import { PAYMENT_METHODS, AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { validateBody, feeCreateSchema } from '@/lib/validation'
@@ -8,6 +9,9 @@ import { validateBody, feeCreateSchema } from '@/lib/validation'
 export async function POST(req: Request) {
   return handle(async () => {
     const auth = await requireAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR'])
+    if (!isInstituteEnabled()) {
+      throw new ApiError(403, 'Institute module is disabled outside approved demo environments')
+    }
     const scopedIds = await getScopedCompanyIds(auth)
     await assertInstituteInScope(scopedIds)
 
