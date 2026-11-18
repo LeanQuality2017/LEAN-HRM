@@ -3,7 +3,7 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
-const BASE_URL = 'http://localhost:3000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3001';
 const BIOMETRIC_KEY = process.env.BIOMETRIC_API_KEY || '0042497832aa12134ec5af7a71e0b1d58a2dd845807c7057';
 const PASSWORD = 'Password@123';
 

@@ -365,3 +365,4 @@ assert.throws(
 console.log('  PASS D.7: Promotion, demotion, and NEW-01 checks remain fully integrated and active');
 
 console.log('\n--- ALL UNIT TESTS COMPLETED SUCCESSFULLY ---');
+

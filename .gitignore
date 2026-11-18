@@ -63,6 +63,8 @@ server.log
 .zscripts/
 examples/
 tests/
+!scripts/tests/
+!scripts/tests/probe-test-db.mjs
 tool-results/
 download/
 bun.lock
