@@ -1,7 +1,7 @@
-import { redirect } from 'next/navigation'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+export const dynamic = 'force-dynamic'
+
 import { db } from '@/lib/db'
+import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ApplyLeaveButton } from './apply-button'
@@ -20,10 +20,9 @@ function statusBadge(s: string) {
 }
 
 export default async function LeavesPage({ searchParams }: { searchParams?: Promise<{ page?: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) redirect('/login')
-  const role = session.user.role
-  const employeeId = session.user.employeeId
+  const auth = await requirePageAuth(['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER', 'EMPLOYEE'])
+  const { role, employeeId, administeredCompanyIds, employedCompanyIds } = auth
+  const isSuperAdmin = role === 'SUPER_ADMIN'
   const isAdmin = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'HR', 'MANAGER'].includes(role)
   const sp = searchParams ? await searchParams : {}
   const page = Math.max(1, parseInt(sp.page || '1', 10) || 1)
@@ -43,16 +42,21 @@ export default async function LeavesPage({ searchParams }: { searchParams?: Prom
       ])
     : [0, []]
 
-  // Leave types available to this user: from their assigned companies
-  const companyIds = employeeId
-    ? (await db.employeeCompanyAssignment.findMany({ where: { employeeId }, select: { companyId: true } })).map((a) => a.companyId)
-    : []
-  const leaveTypes = employeeId
-    ? await db.leaveType.findMany({ where: { companyId: { in: companyIds.length ? companyIds : [''] } } })
-    : []
-  if (!leaveTypes.length) {
-    // admins without an employee record can apply using any company's leave types
-    leaveTypes.push(...(await db.leaveType.findMany({})))
+  // Leave types: scoped to authorized employment scope for staff self-service;
+  // delegated company scope (UserCompanyScope) for administrative views; never fetch all without explicit group-wide authority.
+  let leaveTypes: { id: string; name: string; daysPerYear: number; companyId: string }[] = []
+  if (employeeId && employedCompanyIds.length > 0) {
+    leaveTypes = await db.leaveType.findMany({
+      where: { companyId: { in: employedCompanyIds } },
+    })
+  } else if (!employeeId) {
+    if (isSuperAdmin) {
+      leaveTypes = await db.leaveType.findMany({})
+    } else if (administeredCompanyIds && administeredCompanyIds.length > 0) {
+      leaveTypes = await db.leaveType.findMany({
+        where: { companyId: { in: administeredCompanyIds } },
+      })
+    }
   }
 
   return (
