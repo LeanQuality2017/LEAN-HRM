@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { Prisma } from '@prisma/client'
-import { ROLES, LEAVE_STATUS } from '@/lib/constants'
+import { ROLES, LEAVE_STATUS, todayISO } from '@/lib/constants'
 import type { AuthContext } from '@/lib/api-auth'
 import { POST as applyLeave } from '@/app/api/leaves/route'
 import { PATCH as updateLeave } from '@/app/api/leaves/[id]/route'
@@ -93,8 +93,8 @@ vi.mock('@/lib/api-auth', async (importOriginal) => {
 })
 
 describe('Leave Balance Enforcement & Management (Spec 5.a–5.h)', () => {
-  const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = todayISO()
+  const today = new Date(`${todayStr}T00:00:00.000Z`)
   const tomorrow = new Date(today.getTime() + 86400000)
   const tomorrowStr = tomorrow.toISOString().split('T')[0]
   const dayAfter = new Date(today.getTime() + 2 * 86400000)
