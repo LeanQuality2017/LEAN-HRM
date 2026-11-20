@@ -43,6 +43,14 @@ export function round(val: Prisma.Decimal, dp = 2): Prisma.Decimal {
   return val.toDecimalPlaces(dp, Prisma.Decimal.ROUND_HALF_UP)
 }
 
+/**
+ * Rounds a Decimal up to the next integer rupee using Decimal.ROUND_CEIL.
+ * Used for statutory contributions where the law mandates rounding up to the next rupee (e.g., ESIC practice).
+ */
+export function ceilRupee(val: Prisma.Decimal): Prisma.Decimal {
+  return val.toDecimalPlaces(0, Prisma.Decimal.ROUND_CEIL)
+}
+
 export function add(a: Prisma.Decimal, b: Prisma.Decimal): Prisma.Decimal {
   return a.add(b)
 }

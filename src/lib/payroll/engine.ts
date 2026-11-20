@@ -2,8 +2,12 @@ import { Prisma } from '@prisma/client'
 import { add, div, mul, round, sub, toDecimal, ZERO } from './money'
 import { resolveStructure, EmployeeSalaryInput } from './salary'
 import { computeLop, CompanyPayRuleInput, EmployeeDatesInput, AttendanceSummaryInput } from './attendance'
-import { epf, eps, esi, pfWages, professionalTax, tds } from './statutory'
+import { epf, eps, esi, pfWages, professionalTax } from './statutory'
+import { calculateMonthlyTds, resolveFinancialYear, DeclaredDeductionsInput } from './tds'
+import { PayrollCalculationError } from './errors'
 import { EPF_CONFIG } from './statutory-config'
+
+export { PayrollCalculationError } from './errors'
 
 export interface StatutoryProfileInput {
   pfApplicable?: boolean
@@ -25,6 +29,8 @@ export interface RunContext {
     }
   payRule: CompanyPayRuleInput
   summary?: AttendanceSummaryInput | null
+  previousTdsDeducted?: Prisma.Decimal | string | number | null
+  declaredDeductions?: DeclaredDeductionsInput | null
 }
 
 export interface PayrollLineDraft {
@@ -38,13 +44,6 @@ export interface PayrollLineDraft {
   daysPaid: Prisma.Decimal
   lopDays: Prisma.Decimal
   componentBreakdown: string
-}
-
-export class PayrollCalculationError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'PayrollCalculationError'
-  }
 }
 
 /**
@@ -153,8 +152,25 @@ export function computePayslip(context: RunContext): PayrollLineDraft {
 
   // TDS
   let tax = ZERO
-  if (profile.tdsRegime) {
-    tax = tds(profile)
+  if (profile.tdsRegime && profile.tdsRegime.trim() !== '') {
+    const fy = resolveFinancialYear(context.month, context.year)
+    const monthInFY = context.month >= 4 ? context.month - 3 : context.month + 9
+    const remainingMonthsInFY = Math.max(1, 12 - monthInFY + 1)
+    const grossAnnualSalary = mul(structure.gross, new Prisma.Decimal('12.00'))
+
+    const tdsResult = calculateMonthlyTds({
+      regime: profile.tdsRegime,
+      grossAnnualSalary,
+      declaredDeductions: context.declaredDeductions ?? null,
+      financialYear: fy,
+      currentMonth: monthInFY,
+      remainingMonthsInFY,
+      previousTdsDeducted: context.previousTdsDeducted ? toDecimal(context.previousTdsDeducted) : ZERO,
+    })
+
+    tax = tdsResult.monthlyTds
+  } else {
+    throw new PayrollCalculationError('TDS regime not configured')
   }
 
   const statutory = add(add(add(employeePf, employeeEsi), pt), tax)

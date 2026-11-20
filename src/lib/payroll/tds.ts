@@ -6,18 +6,47 @@ import { toDecimal, round, add, sub, mul, div, min, max, ZERO } from './money'
  * Section 288A & 288B Rounding:
  * Taxable income and total tax liability must be rounded off to the nearest ten rupees.
  * If the last digit is 5 or more, round up; otherwise round down.
+ * Implemented using strict Decimal arithmetic with ZERO float/Number conversion.
  */
 export function roundToNearest10(amount: Prisma.Decimal): Prisma.Decimal {
-  const integerPart = amount.floor()
-  const remainder = Number(integerPart.mod(new Prisma.Decimal(10)).toString())
-  if (remainder >= 5) {
-    return integerPart.plus(new Prisma.Decimal(10 - remainder))
-  }
-  return integerPart.minus(new Prisma.Decimal(remainder))
+  const ten = new Prisma.Decimal('10')
+  return amount.dividedBy(ten).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP).times(ten)
 }
 
 export type TaxRegime = 'NEW' | 'OLD'
-export type FinancialYear = 'FY2024_25' | 'FY2023_24'
+export type FinancialYear = 'FY2026_27' | 'FY2025_26' | 'FY2024_25' | 'FY2023_24'
+
+/**
+ * Resolves Indian Financial Year (April 1 to March 31).
+ * Supports both signatures: (month, year) or (year, month).
+ * Throws an explicit error if the financial year is unconfigured (no silent fallback).
+ */
+export function resolveFinancialYear(param1: number, param2: number): FinancialYear {
+  let month: number
+  let year: number
+
+  if (param1 > 100) {
+    year = param1
+    month = param2
+  } else {
+    month = param1
+    year = param2
+  }
+
+  if (month < 1 || month > 12) {
+    throw new Error(`Invalid month: ${month}. Month must be between 1 and 12.`)
+  }
+
+  const startYear = month >= 4 ? year : year - 1
+  const endYearShort = (startYear + 1) % 100
+  const fyKey = `FY${startYear}_${endYearShort.toString().padStart(2, '0')}` as FinancialYear
+
+  if (!TDS_CONFIG.NEW_REGIME[fyKey as keyof typeof TDS_CONFIG.NEW_REGIME]) {
+    throw new Error(`Tax configuration not found for financial year: ${fyKey}`)
+  }
+
+  return fyKey
+}
 
 export interface DeclaredDeductionsInput {
   section80C?: Prisma.Decimal | number | string | null
@@ -124,7 +153,10 @@ export function calculateAnnualTax(input: AnnualTaxCalculationInput): AnnualTaxR
   let chapter6ADeductions = ZERO
 
   if (normalizedRegime === 'NEW') {
-    const config = TDS_CONFIG.NEW_REGIME[fy] || TDS_CONFIG.NEW_REGIME.FY2024_25
+    const config = TDS_CONFIG.NEW_REGIME[fy as keyof typeof TDS_CONFIG.NEW_REGIME]
+    if (!config) {
+      throw new Error(`Tax configuration not found for financial year: ${fy}`)
+    }
     standardDeduction = min(gross, config.standardDeduction.value)
     slabs = config.slabs
     rebateThreshold = config.rebate87AThreshold.value
@@ -170,7 +202,7 @@ export function calculateAnnualTax(input: AnnualTaxCalculationInput): AnnualTaxR
       taxAfterRebate = max(ZERO, sub(baseTax, rebate87A))
     } else {
       // Marginal Relief under proviso to Section 87A:
-      // Tax payable cannot exceed the income exceeding ₹7,00,000
+      // Tax payable cannot exceed the income exceeding the applicable rebate threshold (e.g. ₹12,00,000 for FY25-26/FY26-27, ₹7,00,000 for FY24-25)
       const excessIncome = sub(taxableIncome, rebateThreshold)
       if (baseTax.greaterThan(excessIncome)) {
         marginalRelief = sub(baseTax, excessIncome)
@@ -186,10 +218,14 @@ export function calculateAnnualTax(input: AnnualTaxCalculationInput): AnnualTaxR
     }
   }
 
-  // Surcharge
+  // Surcharge (regime-aware, sorted descending so higher brackets match first)
   let surcharge = ZERO
   if (taxAfterRebate.greaterThan(ZERO)) {
-    for (const s of TDS_CONFIG.SURCHARGE_SLABS) {
+    const surchargeSlabs = normalizedRegime === 'NEW'
+      ? TDS_CONFIG.SURCHARGE_SLABS.NEW_REGIME
+      : TDS_CONFIG.SURCHARGE_SLABS.OLD_REGIME
+    const sortedSurcharge = [...surchargeSlabs].sort((a, b) => (b.threshold.greaterThan(a.threshold) ? 1 : -1))
+    for (const s of sortedSurcharge) {
       if (taxableIncome.greaterThan(s.threshold)) {
         surcharge = round(mul(taxAfterRebate, s.rate), 2)
         break

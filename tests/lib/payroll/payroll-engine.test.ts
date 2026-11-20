@@ -16,7 +16,6 @@ import {
   eps,
   esi,
   professionalTax,
-  tds,
   computePayslip,
   PayrollCalculationError,
 } from '@/lib/payroll'
@@ -128,10 +127,10 @@ describe('Payroll Calculation Engine (Pure Modules)', () => {
     it('applies ESI at or below ₹21,000 gross monthly wage boundary', () => {
       // At exact boundary: ₹21,000
       const exact = esi(new Prisma.Decimal('21000.00'), true)
-      // Employee 0.75% of 21,000 = 157.50
-      expect(exact.employee.toFixed(2)).toBe('157.50')
-      // Employer 3.25% of 21,000 = 682.50
-      expect(exact.employer.toFixed(2)).toBe('682.50')
+      // Employee 0.75% of 21,000 = 157.50 rounded up to 158.00 per ESIC practice (Regulation 31)
+      expect(exact.employee.toFixed(2)).toBe('158.00')
+      // Employer 3.25% of 21,000 = 682.50 rounded up to 683.00 per ESIC practice (Regulation 31)
+      expect(exact.employer.toFixed(2)).toBe('683.00')
 
       // Below boundary: ₹18,000
       const below = esi(new Prisma.Decimal('18000.00'), true)
@@ -183,20 +182,14 @@ describe('Payroll Calculation Engine (Pure Modules)', () => {
     })
   })
 
-  describe('5. TDS Regime Handling', () => {
-    it('throws when TDS regime is not configured or empty', () => {
-      expect(() => tds(null)).toThrow('TDS regime not configured')
-      expect(() => tds({ tdsRegime: null })).toThrow('TDS regime not configured')
-      expect(() => tds({ tdsRegime: '' })).toThrow('TDS regime not configured')
-    })
-
-    it('throws when TDS regime is invalid', () => {
-      expect(() => tds({ tdsRegime: 'INVALID' })).toThrow('Unsupported TDS regime')
-    })
-
-    it('returns zero for valid regimes (placeholder implementation)', () => {
-      expect(tds({ tdsRegime: 'NEW' }).toFixed(2)).toBe('0.00')
-      expect(tds({ tdsRegime: 'OLD' }).toFixed(2)).toBe('0.00')
+  describe('5. Professional Tax & Statutory Exceptions', () => {
+    it('throws PayrollCalculationError when professional tax state is unknown', () => {
+      expect(() => professionalTax('UNKNOWN_STATE', new Prisma.Decimal('25000.00'))).toThrow(
+        PayrollCalculationError
+      )
+      expect(() => professionalTax('UNKNOWN_STATE', new Prisma.Decimal('25000.00'))).toThrow(
+        'Professional tax configuration missing for state: UNKNOWN_STATE'
+      )
     })
   })
 

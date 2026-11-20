@@ -321,7 +321,6 @@ export const payrollUpdateSchema = z.object({
   gross: nonNegativeAmount.optional(),
   net: nonNegativeAmount.optional(),
   email: emailSchema.optional(),
-  password: z.string().optional(),
 })
 
 // 18. Placements

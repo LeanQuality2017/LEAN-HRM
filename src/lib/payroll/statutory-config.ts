@@ -192,6 +192,64 @@ export const TDS_CONFIG = {
   } as StatutoryConfigItem,
 
   NEW_REGIME: {
+    FY2026_27: {
+      standardDeduction: {
+        value: new Prisma.Decimal('75000.00'),
+        effectiveFrom: '2026-04-01',
+        source: 'Section 16(ia) as amended by Finance Act, 2025; unchanged by Finance Act 2026',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      slabs: [
+        { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('400000.00'), rate: new Prisma.Decimal('0.00') },
+        { min: new Prisma.Decimal('400000.00'), max: new Prisma.Decimal('800000.00'), rate: new Prisma.Decimal('0.05') },
+        { min: new Prisma.Decimal('800000.00'), max: new Prisma.Decimal('1200000.00'), rate: new Prisma.Decimal('0.10') },
+        { min: new Prisma.Decimal('1200000.00'), max: new Prisma.Decimal('1600000.00'), rate: new Prisma.Decimal('0.15') },
+        { min: new Prisma.Decimal('1600000.00'), max: new Prisma.Decimal('2000000.00'), rate: new Prisma.Decimal('0.20') },
+        { min: new Prisma.Decimal('2000000.00'), max: new Prisma.Decimal('2400000.00'), rate: new Prisma.Decimal('0.25') },
+        { min: new Prisma.Decimal('2400000.00'), max: null, rate: new Prisma.Decimal('0.30') },
+      ] as TaxSlab[],
+      rebate87AThreshold: {
+        value: new Prisma.Decimal('1200000.00'),
+        effectiveFrom: '2025-04-01',
+        source: 'Finance Act 2025, Section 87A proviso; unchanged by Finance Act 2026',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      rebate87AMax: {
+        value: new Prisma.Decimal('60000.00'),
+        effectiveFrom: '2025-04-01',
+        source: 'Finance Act 2025, Section 87A proviso; unchanged by Finance Act 2026',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+    },
+    FY2025_26: {
+      standardDeduction: {
+        value: new Prisma.Decimal('75000.00'),
+        effectiveFrom: '2025-04-01',
+        source: 'Section 16(ia) as amended by Finance Act, 2025',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      slabs: [
+        { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('400000.00'), rate: new Prisma.Decimal('0.00') },
+        { min: new Prisma.Decimal('400000.00'), max: new Prisma.Decimal('800000.00'), rate: new Prisma.Decimal('0.05') },
+        { min: new Prisma.Decimal('800000.00'), max: new Prisma.Decimal('1200000.00'), rate: new Prisma.Decimal('0.10') },
+        { min: new Prisma.Decimal('1200000.00'), max: new Prisma.Decimal('1600000.00'), rate: new Prisma.Decimal('0.15') },
+        { min: new Prisma.Decimal('1600000.00'), max: new Prisma.Decimal('2000000.00'), rate: new Prisma.Decimal('0.20') },
+        { min: new Prisma.Decimal('2000000.00'), max: new Prisma.Decimal('2400000.00'), rate: new Prisma.Decimal('0.25') },
+        { min: new Prisma.Decimal('2400000.00'), max: null, rate: new Prisma.Decimal('0.30') },
+      ] as TaxSlab[],
+      rebate87AThreshold: {
+        value: new Prisma.Decimal('1200000.00'),
+        effectiveFrom: '2025-04-01',
+        source: 'Finance Act 2025, Section 87A proviso',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      rebate87AMax: {
+        value: new Prisma.Decimal('60000.00'),
+        effectiveFrom: '2025-04-01',
+        source: 'Finance Act 2025, Section 87A proviso',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+    },
     FY2024_25: {
       standardDeduction: {
         value: new Prisma.Decimal('75000.00'),
@@ -283,10 +341,19 @@ export const TDS_CONFIG = {
     } as StatutoryConfigItem,
   },
 
-  SURCHARGE_SLABS: [
-    { threshold: new Prisma.Decimal('50000000.00'), rate: new Prisma.Decimal('0.25') },
-    { threshold: new Prisma.Decimal('20000000.00'), rate: new Prisma.Decimal('0.25') },
-    { threshold: new Prisma.Decimal('10000000.00'), rate: new Prisma.Decimal('0.15') },
-    { threshold: new Prisma.Decimal('5000000.00'), rate: new Prisma.Decimal('0.10') },
-  ],
+  SURCHARGE_SLABS: {
+    // Under Section 115BAC (New Regime), highest surcharge is capped at 25% for income > ₹2 Cr (Finance Act 2023 onwards)
+    NEW_REGIME: [
+      { threshold: new Prisma.Decimal('20000000.00'), rate: new Prisma.Decimal('0.25') },
+      { threshold: new Prisma.Decimal('10000000.00'), rate: new Prisma.Decimal('0.15') },
+      { threshold: new Prisma.Decimal('5000000.00'), rate: new Prisma.Decimal('0.10') },
+    ],
+    // Under Old Regime, surcharge above ₹5 Cr is 37%, ₹2-5 Cr is 25%, ₹1-2 Cr is 15%, ₹50L-1Cr is 10%
+    OLD_REGIME: [
+      { threshold: new Prisma.Decimal('50000000.00'), rate: new Prisma.Decimal('0.37') },
+      { threshold: new Prisma.Decimal('20000000.00'), rate: new Prisma.Decimal('0.25') },
+      { threshold: new Prisma.Decimal('10000000.00'), rate: new Prisma.Decimal('0.15') },
+      { threshold: new Prisma.Decimal('5000000.00'), rate: new Prisma.Decimal('0.10') },
+    ],
+  },
 }

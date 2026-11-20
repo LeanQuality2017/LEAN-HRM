@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { EPF_CONFIG, ESI_CONFIG, PT_CONFIG } from './statutory-config'
-import { min, mul, round, ZERO } from './money'
+import { ceilRupee, min, mul, round, ZERO } from './money'
+import { PayrollCalculationError } from './errors'
 
 /**
  * Computes PF Eligible Wages according to EPF Scheme.
@@ -63,8 +64,8 @@ export function esi(
   }
 
   return {
-    employee: round(mul(gross, ESI_CONFIG.EMPLOYEE_RATE.value)),
-    employer: round(mul(gross, ESI_CONFIG.EMPLOYER_RATE.value)),
+    employee: ceilRupee(mul(gross, ESI_CONFIG.EMPLOYEE_RATE.value)),
+    employer: ceilRupee(mul(gross, ESI_CONFIG.EMPLOYER_RATE.value)),
   }
 }
 
@@ -80,7 +81,7 @@ export function professionalTax(state: string, monthlyGross: Prisma.Decimal): Pr
   const stateConfig = PT_CONFIG[normalizedState]
 
   if (!stateConfig) {
-    return ZERO
+    throw new PayrollCalculationError(`Professional tax configuration missing for state: ${state}`)
   }
 
   for (const slab of stateConfig.slabs) {
@@ -91,24 +92,6 @@ export function professionalTax(state: string, monthlyGross: Prisma.Decimal): Pr
     }
   }
 
-  return ZERO
-}
-
-/**
- * TDS (Tax Deducted at Source) calculation placeholder.
- * Throws an explicit error if the tax regime is not configured.
- */
-export function tds(profile: { tdsRegime?: string | null } | null | undefined): Prisma.Decimal {
-  if (!profile || !profile.tdsRegime || profile.tdsRegime.trim() === '') {
-    throw new Error('TDS regime not configured')
-  }
-
-  const regime = profile.tdsRegime.trim().toUpperCase()
-  if (regime !== 'NEW' && regime !== 'OLD') {
-    throw new Error(`Unsupported TDS regime: ${profile.tdsRegime}. Expected 'NEW' or 'OLD'.`)
-  }
-
-  // Placeholder: Income-tax Section 192 detailed projection engine to be wired in subsequent phase
   return ZERO
 }
 

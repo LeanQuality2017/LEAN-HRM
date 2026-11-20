@@ -1,4 +1,5 @@
 export * from './money'
+export * from './errors'
 export * from './statutory-config'
 export * from './statutory'
 export * from './salary'

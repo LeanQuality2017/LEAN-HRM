@@ -62,35 +62,40 @@ This document formalizes the statutory, mathematical, and business policy rules 
 
 ---
 
-### K4: ESI Wage Ceiling & 6-Month Contribution Period Continuation
-- **Statutory / Business Question**: If an employee's monthly gross wage exceeds the statutory ₹21,000 ESI threshold due to an increment or mid-period overtime, does ESI deduction continue until the end of the ongoing statutory contribution period?
+### K4: ESI Wage Ceiling, Contribution Period Continuation & Rounding
+- **Statutory / Business Question**: If an employee's monthly gross wage exceeds the statutory ₹21,000 ESI threshold due to an increment or mid-period overtime, does ESI deduction continue until the end of the ongoing statutory contribution period? What rounding rule applies to contributions?
 - **Available Options**:
   1. Contribution Period Continuation Rule: Under Rule 50 of the Employees' State Insurance (Central) Rules, 1950, if an employee's wage crosses ₹21,000 after the start of a contribution period (April 1 to Sept 30, or Oct 1 to March 31), deductions **MUST continue** until the end of that contribution period.
   2. Discrete Monthly Evaluation: ESI is evaluated strictly month-by-month; any month where gross exceeds ₹21,000 incurs zero deduction.
+  3. Rounding: Regulation 31 of the ESIC (General) Regulations, 1950 mandates rounding up every contribution fraction to the next higher integer rupee (`ROUND_CEIL`).
 - **Current Code Implementation**:
-  - Implemented in [src/lib/payroll/statutory.ts#L46-L69](file:///x:/LEAN-HRM/src/lib/payroll/statutory.ts#L46-L69).
-  - Evaluates monthly gross in isolation against `ESI_CONFIG.WAGE_CEILING` (₹21,000). If gross > ₹21,000, returns ₹0.00.
-- **Status**: **PENDING CLIENT CA CONFIRMATION**
+  - Implemented in [src/lib/payroll/statutory.ts](file:///x:/LEAN-HRM/src/lib/payroll/statutory.ts) and [src/lib/payroll/money.ts](file:///x:/LEAN-HRM/src/lib/payroll/money.ts).
+  - Evaluates monthly gross against `ESI_CONFIG.WAGE_CEILING` (₹21,000). If gross > ₹21,000, returns ₹0.00.
+  - Applies `ceilRupee()` (`Decimal.ROUND_CEIL`) to employee (0.75%) and employer (3.25%) contributions, rounding fractions up to the next integer rupee (e.g. ₹157.50 -> ₹158.00; ₹682.50 -> ₹683.00).
+- **Status**: **PENDING CLIENT CA CONFIRMATION (Contribution Period Continuation)**; **CONFIRMED STATUTORY (Ceil Rupee Rounding per ESIC Regulation 31)**
 - **Tests Locking This Assumption**:
-  - `tests/lib/payroll/payroll-engine.test.ts > applies ESI at or below ₹21,000 gross monthly wage boundary` ([L128-L140](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L128-L140))
-  - `tests/lib/payroll/payroll-engine.test.ts > exempts ESI immediately above ₹21,000 gross boundary` ([L142-L152](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L142-L152))
+  - `tests/lib/payroll/payroll-engine.test.ts > applies ESI at or below ₹21,000 gross monthly wage boundary`
+  - `tests/lib/payroll/payroll-engine.test.ts > exempts ESI immediately above ₹21,000 gross boundary`
 
 ---
 
-### K5: Professional Tax State Slabs & February Apportionment
-- **Statutory / Business Question**: How should state-specific annual PT statutory caps (e.g. Maharashtra ₹2,500/year requiring ₹300 in February instead of ₹200; Tamil Nadu half-yearly ₹1,250 cap) be scheduled across monthly payroll runs?
+### K5: Professional Tax State Slabs, Unknown State Policy & February Apportionment
+- **Statutory / Business Question**: How should state-specific annual PT statutory caps (e.g. Maharashtra ₹2,500/year requiring ₹300 in February instead of ₹200; Tamil Nadu half-yearly ₹1,250 cap) be scheduled across monthly payroll runs? How should missing/unsupported state tax codes be handled?
 - **Available Options**:
   1. Exact Calendar Schedulers: Deduct ₹200 Mar–Jan and ₹300 in February for Maharashtra.
   2. Uniform Monthly Apportionment: Deduct uniform ₹208.33/month for Tamil Nadu (₹1,250 / 6 months).
   3. Half-Yearly Lump-Sum Deduction: Deduct once in September and once in March.
+  4. Unsupported State Guard: Throw an explicit `PayrollCalculationError` to prevent silent under-deduction when an employee has an unconfigured state tax code.
 - **Current Code Implementation**:
-  - Implemented in [src/lib/payroll/statutory-config.ts](file:///x:/LEAN-HRM/src/lib/payroll/statutory-config.ts) and [src/lib/payroll/statutory.ts#L74-L95](file:///x:/LEAN-HRM/src/lib/payroll/statutory.ts#L74-L95).
-  - Deducts monthly based on progressive slabs. For Tamil Nadu, applies ₹208.33/mo for the highest bracket. For Maharashtra, applies ₹200.00/mo flat without the February ₹300 spike.
-- **Status**: **PENDING CLIENT CA CONFIRMATION**
+  - Implemented in [src/lib/payroll/statutory-config.ts](file:///x:/LEAN-HRM/src/lib/payroll/statutory-config.ts) and [src/lib/payroll/statutory.ts](file:///x:/LEAN-HRM/src/lib/payroll/statutory.ts).
+  - Deducts monthly based on progressive slabs (TN: ₹208.33/mo top slab; MH: ₹200.00/mo flat; KA: ₹200.00/mo above ₹25,000).
+  - If state is missing from `PT_CONFIG`, throws `PayrollCalculationError` ("Unknown or unsupported professional tax state: ..."). Zero silent fallbacks to ₹0.00.
+- **Status**: **PENDING CLIENT CA CONFIRMATION (February Apportionment)**; **CONFIRMED SECURITY / ACCURACY (Hard error on unknown PT state)**
 - **Tests Locking This Assumption**:
-  - `tests/lib/payroll/payroll-engine.test.ts > evaluates Tamil Nadu (TN) monthly apportioned slabs` ([L162-L169](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L162-L169))
-  - `tests/lib/payroll/payroll-engine.test.ts > evaluates Maharashtra (MH) monthly slabs` ([L171-L176](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L171-L176))
-  - `tests/lib/payroll/payroll-engine.test.ts > evaluates Karnataka (KA) 2023 revised slabs` ([L178-L183](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L178-L183))
+  - `tests/lib/payroll/payroll-engine.test.ts > evaluates Tamil Nadu (TN) monthly apportioned slabs`
+  - `tests/lib/payroll/payroll-engine.test.ts > evaluates Maharashtra (MH) monthly slabs`
+  - `tests/lib/payroll/payroll-engine.test.ts > evaluates Karnataka (KA) 2023 revised slabs`
+  - `tests/lib/payroll/payroll-engine.test.ts > throws PayrollCalculationError when professional tax state is unknown`
 
 ---
 
@@ -101,12 +106,12 @@ This document formalizes the statutory, mathematical, and business policy rules 
   2. Default Full LOP: Treat unpunched days as unauthorized absence (LOP = total working days).
   3. Generation Hard Block: Reject payroll generation and force HR/Manager attendance regularisation.
 - **Current Code Implementation**:
-  - Implemented in [src/app/api/payroll/route.ts#L628-L633](file:///x:/LEAN-HRM/src/app/api/payroll/route.ts#L628-L633).
+  - Implemented in [src/app/api/payroll/route.ts](file:///x:/LEAN-HRM/src/app/api/payroll/route.ts).
   - Defaults to `lopDays = 0` and `otHours = 0`, generating 100% full pay if no attendance records exist.
 - **Status**: **PENDING CLIENT CA CONFIRMATION**
 - **Tests Locking This Assumption**:
-  - `tests/lib/payroll/payroll-engine.test.ts > handles employee with zero base salary safely` ([L268-L286](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L268-L286))
-  - `tests/lib/payroll/payroll-engine.test.ts > calculates mid-month join correctly` ([L26-L42](file:///x:/LEAN-HRM/tests/lib/payroll/payroll-engine.test.ts#L26-L42))
+  - `tests/lib/payroll/payroll-engine.test.ts > handles employee with zero base salary safely`
+  - `tests/lib/payroll/payroll-engine.test.ts > calculates mid-month join correctly`
 
 ---
 
@@ -122,7 +127,7 @@ This document formalizes the statutory, mathematical, and business policy rules 
   - Computes $\text{Leave Days} \times (\text{Basic} / \text{leaveDivisor})$, with `leaveDivisor` defaulting to 30.
 - **Status**: **PENDING CLIENT CA CONFIRMATION**
 - **Tests Locking This Assumption**:
-  - `tests/lib/payroll/settlement.test.ts > I10: Full & Final: Guarantees Net-never-negative invariant and routes excess deductions to recoverableBalance` ([L146-L193](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L146-L193))
+  - `tests/lib/payroll/settlement.test.ts > I10: Full & Final: Guarantees Net-never-negative invariant and routes excess deductions to recoverableBalance`
 
 ---
 
@@ -138,10 +143,10 @@ This document formalizes the statutory, mathematical, and business policy rules 
   - Requires `tenureYears >= 5` (unless death/disablement). For tenure rounding, `tenureMonths > 6` rounds up to $+1$ year; $\le 6$ months is discarded.
 - **Status**: **PENDING CLIENT CA CONFIRMATION**
 - **Tests Locking This Assumption**:
-  - `tests/lib/payroll/settlement.test.ts > I6: Gratuity: Ineligible if tenure is less than 5 completed continuous years` ([L80-L91](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L80-L91))
-  - `tests/lib/payroll/settlement.test.ts > I7: Gratuity: Computes correct amount using 15/26 formula for service >= 5 years` ([L93-L106](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L93-L106))
-  - `tests/lib/payroll/settlement.test.ts > I8: Gratuity: Part-year tenure > 6 months rounds up to full year; <= 6 months drops` ([L108-L126](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L108-L126))
-  - `tests/lib/payroll/settlement.test.ts > I9: Gratuity: Caps total gratuity payment at statutory limit of ₹20,00,000` ([L128-L144](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L128-L144))
+  - `tests/lib/payroll/settlement.test.ts > I6: Gratuity: Ineligible if tenure is less than 5 completed continuous years`
+  - `tests/lib/payroll/settlement.test.ts > I7: Gratuity: Computes correct amount using 15/26 formula for service >= 5 years`
+  - `tests/lib/payroll/settlement.test.ts > I8: Gratuity: Part-year tenure > 6 months rounds up to full year; <= 6 months drops`
+  - `tests/lib/payroll/settlement.test.ts > I9: Gratuity: Caps total gratuity payment at statutory limit of ₹20,00,000`
 
 ---
 
@@ -155,32 +160,50 @@ This document formalizes the statutory, mathematical, and business policy rules 
   - Defaults calculation ceiling to ₹7,000.00 unless an explicit `minimumWage` is provided, using $\max(₹7000, \text{minimumWage})$.
 - **Status**: **PENDING CLIENT CA CONFIRMATION**
 - **Tests Locking This Assumption**:
-  - `tests/lib/payroll/settlement.test.ts > I1: Statutory Bonus: Ineligible if days worked in accounting year is less than 30` ([L8-L17](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L8-L17))
-  - `tests/lib/payroll/settlement.test.ts > I2: Statutory Bonus: Ineligible if monthly basic salary exceeds ₹21,000 ceiling` ([L19-L29](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L19-L29))
-  - `tests/lib/payroll/settlement.test.ts > I3: Statutory Bonus: Computes minimum statutory bonus 8.33% on ₹7,000 calculation ceiling` ([L31-L45](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L31-L45))
-  - `tests/lib/payroll/settlement.test.ts > I4: Statutory Bonus: Computes maximum statutory bonus 20.00% on calculation ceiling` ([L47-L58](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L47-L58))
-  - `tests/lib/payroll/settlement.test.ts > I5: Statutory Bonus: Clamps rate below 8.33% up to minimum and above 20% down to maximum` ([L60-L78](file:///x:/LEAN-HRM/tests/lib/payroll/settlement.test.ts#L60-L78))
+  - `tests/lib/payroll/settlement.test.ts > I1: Statutory Bonus: Ineligible if days worked in accounting year is less than 30`
+  - `tests/lib/payroll/settlement.test.ts > I2: Statutory Bonus: Ineligible if monthly basic salary exceeds ₹21,000 ceiling`
+  - `tests/lib/payroll/settlement.test.ts > I3: Statutory Bonus: Computes minimum statutory bonus 8.33% on ₹7,000 calculation ceiling`
+  - `tests/lib/payroll/settlement.test.ts > I4: Statutory Bonus: Computes maximum statutory bonus 20.00% on calculation ceiling`
+  - `tests/lib/payroll/settlement.test.ts > I5: Statutory Bonus: Clamps rate below 8.33% up to minimum and above 20% down to maximum`
 
 ---
 
-### K10: TDS Slab Year, Standard Deduction & Investment Proof Cutoff
-- **Statutory / Business Question**: Which financial year's Finance Act provisions should apply as default for current payroll runs (FY 2024-25 vs FY 2023-24), and how should unverified investment declarations be phased into tax deductions?
-- **Available Options**:
-  1. Finance (No. 2) Act, 2024: Standard deduction ₹75,000; revised slabs (3L–7L @ 5%, 7L–10L @ 10%, 10L–12L @ 15%, 12L–15L @ 20%, >15L @ 30%).
-  2. Finance Act, 2023: Standard deduction ₹50,000; slabs (3L–6L @ 5%, 6L–9L @ 10%, 9L–12L @ 15%, 12L–15L @ 20%, >15L @ 30%).
-  3. Proof Cutoff Policy: Deduct tax based on declarations from April to December; require verified proofs in January; revoke unverified deductions in February/March.
+### K10: TDS Financial Year Resolution, Slabs, Section 87A Rebate & Surcharge Caps
+- **Statutory / Business Question**: Which financial year provisions apply for payroll runs, how are Indian Financial Years dynamically resolved from payroll run dates, and how are revised slabs, rebates, and surcharges calculated?
+- **Available Options & Statutory Framework**:
+  1. **FY 2025-26 & FY 2026-27 (Finance Act, 2025 & Finance Act, 2026)**:
+     - Standard Deduction: ₹75,000 (Section 16(ia)).
+     - Revised Progressive Slabs (New Regime):
+       - ₹0 to ₹4,00,000: Nil
+       - ₹4,00,001 to ₹8,00,000: 5%
+       - ₹8,00,001 to ₹12,00,000: 10%
+       - ₹12,00,001 to ₹16,00,000: 15%
+       - ₹16,00,001 to ₹20,00,000: 20%
+       - ₹20,00,001 to ₹24,00,000: 25%
+       - Above ₹24,00,000: 30%
+     - Section 87A Rebate: Full rebate on taxable income up to ₹12,00,000 (maximum rebate ₹60,000). Proviso for marginal relief caps tax at excess income over ₹12,00,000.
+     - Surcharge Cap: New Regime surcharge is capped at 25% for taxable income > ₹2 Crore (Section 115BAC(1A)); Old Regime maintains 37% bracket for > ₹5 Crore.
+  2. **FY 2024-25 (Finance (No. 2) Act, 2024)**:
+     - Standard deduction ₹75,000; slabs: 0-3L 0%, 3L-7L 5%, 7L-10L 10%, 10L-12L 15%, 12L-15L 20%, >15L 30%. Section 87A rebate threshold: ₹7,00,000 (max ₹25,000).
+  3. **FY 2023-24 (Finance Act, 2023)**:
+     - Standard deduction ₹50,000; slabs: 0-3L 0%, 3L-6L 5%, 6L-9L 10%, 9L-12L 15%, 12L-15L 20%, >15L 30%.
+  4. **Dynamic FY Resolution**:
+     - Automatically resolves Indian Financial Year (April 1 to March 31) from `month` and `year` via `resolveFinancialYear()`. Throws explicit error if unconfigured.
+  5. **Cumulative Deduction & Mid-Year Re-spreading**:
+     - Queries prior `PayrollLine` records within the same FY, accumulates `previousTdsDeducted`, and spreads the remaining tax liability evenly across remaining months.
+  6. **Section 288A & 288B Rounding**:
+     - Strict Decimal arithmetic (`dividedBy(10).toDecimalPlaces(0, ROUND_HALF_UP).times(10)`) without floating point conversion.
 - **Current Code Implementation**:
-  - Implemented in [src/lib/payroll/statutory-config.ts](file:///x:/LEAN-HRM/src/lib/payroll/statutory-config.ts) and [src/lib/payroll/tds.ts](file:///x:/LEAN-HRM/src/lib/payroll/tds.ts).
-  - Defaults to `FY2024_25` (Finance (No. 2) Act 2024: ₹75,000 std deduction, revised slabs, Section 87A marginal relief), while also supporting `FY2023_24` as a parameter.
-- **Status**: **PENDING CLIENT CA CONFIRMATION**
-- **Tests Locking This Assumption**:
-  - `tests/lib/payroll/tds.test.ts > H2: New Regime: Income below basic exemption threshold results in zero tax` ([L23-L38](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L23-L38))
-  - `tests/lib/payroll/tds.test.ts > H3: New Regime: Taxable income <= ₹7,00,000 receives 100% Section 87A rebate resulting in zero tax` ([L40-L57](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L40-L57))
-  - `tests/lib/payroll/tds.test.ts > H4: New Regime: Marginal Relief u/s 87A proviso caps tax at excess income over ₹7,00,000` ([L59-L81](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L59-L81))
-  - `tests/lib/payroll/tds.test.ts > H5: New Regime: Computes progressive slab tax correctly for high income above marginal relief with 4% cess` ([L83-L106](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L83-L106))
-  - `tests/lib/payroll/tds.test.ts > H6: Old Regime: Taxable income <= ₹5,00,000 receives 100% Section 87A rebate resulting in zero tax` ([L108-L124](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L108-L124))
-  - `tests/lib/payroll/tds.test.ts > H7: Old Regime: Deducts Section 80C and 80D from gross salary` ([L126-L142](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L126-L142))
-  - `tests/lib/payroll/tds.test.ts > H8: Old Regime: Computes slab tax correctly above ₹5,00,000 with 4% cess` ([L144-L162](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L144-L162))
-  - `tests/lib/payroll/tds.test.ts > H9: Spreads annual tax liability evenly across remaining months in financial year` ([L164-L185](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L164-L185))
-  - `tests/lib/payroll/tds.test.ts > H10: Correctly re-spreads remaining tax liability after mid-year deductions or revisions` ([L187-L203](file:///x:/LEAN-HRM/tests/lib/payroll/tds.test.ts#L187-L203))
-
+  - Implemented in [src/lib/payroll/statutory-config.ts](file:///x:/LEAN-HRM/src/lib/payroll/statutory-config.ts), [src/lib/payroll/tds.ts](file:///x:/LEAN-HRM/src/lib/payroll/tds.ts), [src/lib/payroll/engine.ts](file:///x:/LEAN-HRM/src/lib/payroll/engine.ts), and [src/app/api/payroll/route.ts](file:///x:/LEAN-HRM/src/app/api/payroll/route.ts).
+  - Pure calculation engine wired directly into `computePayslip()`. Zero placeholder math.
+- **Status**: **CONFIRMED STATUTORY (Finance Act 2025/2026, Section 192, Section 87A, Section 115BAC, Section 288A/B)**
+- **Tests Locking This Implementation**:
+  - `tests/lib/payroll/tds.test.ts > H1–H10` (Full statutory TDS test suite)
+  - `tests/lib/payroll/tds.test.ts > 7.a: Integration proof between computePayslip() and calculateMonthlyTds()`
+  - `tests/lib/payroll/tds.test.ts > 7.b: FY 2026-27 Slabs & Section 87A ₹12L Exemption`
+  - `tests/lib/payroll/tds.test.ts > 7.c: FY 2026-27 Marginal Relief u/s 87A`
+  - `tests/lib/payroll/tds.test.ts > 7.d: Indian Financial Year Resolution`
+  - `tests/lib/payroll/tds.test.ts > 7.e: Explicit Error on Unconfigured Financial Year`
+  - `tests/lib/payroll/tds.test.ts > 7.f: Cumulative TDS Re-spread Across Months`
+  - `tests/lib/payroll/tds.test.ts > 7.g: Section 288A/B Rounding (roundToNearest10)`
+  - `tests/lib/payroll/tds.test.ts > 7.h: computePayslip TDS Regime Configuration Guard`

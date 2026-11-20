@@ -20,7 +20,7 @@ import { logAudit } from '@/lib/audit'
 import { validateBody, payrollCreateSchema, payrollUpdateSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
 import { sendPayslipReadyEmail } from '@/lib/mail'
-import { computePayslip } from '@/lib/payroll/engine'
+import { computePayslip, DeclaredDeductionsInput } from '@/lib/payroll'
 
 /**
  * Validates strict adjacent state transitions:
@@ -432,6 +432,49 @@ export async function POST(req: Request) {
           },
         })
 
+        // Determine Indian Financial Year start and end for current run (month, year)
+        const fyStartYear = month >= 4 ? year : year - 1
+        const fyEndYear = fyStartYear + 1
+
+        // Find prior lines in the same FY for this employee and company
+        const priorLines = await tx.payrollLine.findMany({
+          where: {
+            employeeId: emp.id,
+            run: {
+              companyId: targetCompanyId,
+              OR: [
+                {
+                  year: fyStartYear,
+                  month: { gte: 4, ...(month >= 4 ? { lt: month } : {}) },
+                },
+                ...(month < 4
+                  ? [
+                      {
+                        year: fyEndYear,
+                        month: { lt: month },
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          },
+          select: { tds: true },
+        })
+
+        const previousTdsDeducted = priorLines.reduce(
+          (sum, line) => sum.add(line.tds ?? new Prisma.Decimal('0.00')),
+          new Prisma.Decimal('0.00')
+        )
+
+        let declaredDeductions: DeclaredDeductionsInput | null = null
+        if (emp.statutoryProfile?.declarations) {
+          try {
+            declaredDeductions = JSON.parse(emp.statutoryProfile.declarations)
+          } catch {
+            declaredDeductions = null
+          }
+        }
+
         // Compute pure payslip draft via calculation engine (zero placeholder math)
         const draft = computePayslip({
           runId: payrollRun.id,
@@ -441,6 +484,8 @@ export async function POST(req: Request) {
           employee: emp,
           payRule,
           summary,
+          previousTdsDeducted,
+          declaredDeductions,
         })
 
         // Create PayrollLine
@@ -596,8 +641,10 @@ export async function PATCH(req: Request) {
     const body = validateBody(payrollUpdateSchema, rawBody)
 
     // Step-up verification retained: if superadmin credentials supplied, verify them
-    if (body.email && body.password) {
-      await verifySuperadminStepUp(auth, body.email, body.password, req)
+    const stepUpEmail = (rawBody?.email as string) || (body.email as string) || req.headers.get('x-step-up-email')
+    const stepUpPassword = (rawBody?.password as string) || req.headers.get('x-step-up-password')
+    if (stepUpEmail && stepUpPassword) {
+      await verifySuperadminStepUp(auth, stepUpEmail, stepUpPassword, req)
     }
 
     const scopedIds = await getScopedCompanyIds(auth)
