@@ -99,6 +99,7 @@ model Employee {
   assignments     EmployeeCompanyAssignment[]
   attendance      Attendance[]
   leaveRequests   LeaveRequest[]
+  leaveBalances   LeaveBalance[]
   payrolls        Payroll[]
   workReports     DailyWorkReport[]
   reviews         PerformanceReview[] @relation("Reviewee")
@@ -162,15 +163,55 @@ model Attendance {
 }
 
 model LeaveType {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   companyId   String
   name        String
-  daysPerYear Int    @default(12)
+  daysPerYear Int     @default(12)
+  isUnpaid    Boolean @default(false)
 
-  company  Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  requests LeaveRequest[]
+  company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requests    LeaveRequest[]
+  accrualRule LeaveAccrualRule?
+  balances    LeaveBalance[]
 
   @@unique([companyId, name])
+}
+
+model LeaveAccrualRule {
+  id              String   @id @default(cuid())
+  leaveTypeId     String   @unique
+  frequency       String   // MONTHLY | QUARTERLY | YEARLY | UPFRONT
+  amount          Decimal  @db.Decimal(6, 2)
+  carryForwardCap Decimal  @default(0) @db.Decimal(6, 2)
+  expiryMonths    Int      @default(0)
+  proRateOnJoin   Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@index([leaveTypeId])
+}
+
+model LeaveBalance {
+  id               String   @id @default(cuid())
+  employeeId       String
+  leaveTypeId      String
+  year             Int
+  credited         Decimal  @db.Decimal(6, 2)
+  used             Decimal  @default(0) @db.Decimal(6, 2)
+  carriedForward   Decimal  @default(0) @db.Decimal(6, 2)
+  lapsed           Decimal  @default(0) @db.Decimal(6, 2)
+  lastAccruedMonth Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@index([employeeId, year])
+  @@index([leaveTypeId])
 }
 
 model LeaveRequest {
