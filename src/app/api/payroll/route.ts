@@ -20,7 +20,15 @@ import { logAudit } from '@/lib/audit'
 import { validateBody, payrollCreateSchema, payrollUpdateSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
 import { sendPayslipReadyEmail } from '@/lib/mail'
-import { computePayslip, DeclaredDeductionsInput, PayrollCalculationError, PayrollLineDraft } from '@/lib/payroll'
+import {
+  computePayslip,
+  DeclaredDeductionsInput,
+  PayrollCalculationError,
+  PayrollLineDraft,
+  parseEarningsBreakdown,
+  serializeMoney,
+  toDecimal,
+} from '@/lib/payroll'
 
 /**
  * Validates strict adjacent state transitions:
@@ -138,26 +146,31 @@ export async function GET(req: Request) {
 
     // If new v2 lines exist, return them with backwards-compatible aliases
     if (totalLines > 0) {
-      const serialized = lines.map((l) => ({
-        id: l.id,
-        runId: l.runId,
-        employeeId: l.employeeId,
-        gross: Number(l.gross),
-        deductions: Number(l.deductions),
-        statutory: Number(l.statutory),
-        net: Number(l.net),
-        daysPaid: Number(l.daysPaid),
-        lopDays: Number(l.lopDays),
-        componentBreakdown: l.componentBreakdown,
-        // Legacy compatibility properties:
-        basic: Number(l.gross) * 0.5,
-        allowances: Number(l.gross) * 0.5,
-        netPay: Number(l.net),
-        status: l.run.status,
-        month: l.run.month,
-        year: l.run.year,
-        employee: l.employee,
-      }))
+      const serialized = lines.map((l) => {
+        const { basic, allowances } = parseEarningsBreakdown(l.componentBreakdown)
+        return {
+          id: l.id,
+          runId: l.runId,
+          employeeId: l.employeeId,
+          // money fields: string by contract (serializeMoney)
+          gross: serializeMoney(l.gross),
+          deductions: serializeMoney(l.deductions),
+          statutory: serializeMoney(l.statutory),
+          net: serializeMoney(l.net),
+          // non-money metrics:
+          daysPaid: Number(l.daysPaid),
+          lopDays: Number(l.lopDays),
+          componentBreakdown: l.componentBreakdown,
+          // Legacy compatibility properties:
+          basic,
+          allowances,
+          netPay: serializeMoney(l.net),
+          status: l.run.status,
+          month: l.run.month,
+          year: l.run.year,
+          employee: l.employee,
+        }
+      })
 
       return Response.json({ ok: true, data: serialized, page, pageSize, total: totalLines })
     }
@@ -198,10 +211,11 @@ export async function GET(req: Request) {
 
     const serializedLegacy = legacyData.map((p) => ({
       ...p,
-      basic: Number(p.basic),
-      allowances: Number(p.allowances),
-      deductions: Number(p.deductions),
-      netPay: Number(p.netPay),
+      // money fields: string by contract (serializeMoney)
+      basic: serializeMoney(p.basic),
+      allowances: serializeMoney(p.allowances),
+      deductions: serializeMoney(p.deductions),
+      netPay: serializeMoney(p.netPay),
     }))
 
     return Response.json({ ok: true, data: serializedLegacy, page, pageSize, total: totalLegacy })
@@ -278,10 +292,11 @@ export async function POST(req: Request) {
           month: existingRun.month,
           year: existingRun.year,
           status: existingRun.status,
-          totalGross: Number(existingRun.totalGross),
-          totalDeductions: Number(existingRun.totalDeductions),
-          totalStatutory: Number(existingRun.totalStatutory),
-          totalNet: Number(existingRun.totalNet),
+          // money fields: string by contract (serializeMoney)
+          totalGross: serializeMoney(existingRun.totalGross),
+          totalDeductions: serializeMoney(existingRun.totalDeductions),
+          totalStatutory: serializeMoney(existingRun.totalStatutory),
+          totalNet: serializeMoney(existingRun.totalNet),
           created: 0,
           skipped: [], // array, never omitted
           skippedCount: existingRun.lines.length,
@@ -353,7 +368,7 @@ export async function POST(req: Request) {
       let totalStatutory = new Prisma.Decimal('0.00')
       let totalNet = new Prisma.Decimal('0.00')
 
-      const createdRecipients: Array<{ email: string; name: string; netPay: number }> = []
+      const createdRecipients: Array<{ email: string; name: string; netPay: string }> = []
       const skippedEmployees: Array<{
         employeeId: string
         employeeCode: string
@@ -408,8 +423,7 @@ export async function POST(req: Request) {
         }
 
         for (const leave of approvedLeaves) {
-          const typeName = (leave.leaveType?.name || '').toLowerCase()
-          if (typeName.includes('unpaid') || typeName.includes('lop') || typeName.includes('loss of pay')) {
+          if (leave.leaveType?.isUnpaid) {
             attendanceLopCount += leave.days
           }
         }
@@ -582,7 +596,7 @@ export async function POST(req: Request) {
           createdRecipients.push({
             email: emp.user.email,
             name: emp.user.name || 'Employee',
-            netPay: Number(draft.net.toFixed(2)),
+            netPay: serializeMoney(draft.net),
           })
         }
       }
@@ -636,10 +650,11 @@ export async function POST(req: Request) {
         month: run.month,
         year: run.year,
         status: run.status,
-        totalGross: Number(run.totalGross),
-        totalDeductions: Number(run.totalDeductions),
-        totalStatutory: Number(run.totalStatutory),
-        totalNet: Number(run.totalNet),
+        // money fields: string by contract (serializeMoney)
+        totalGross: serializeMoney(run.totalGross),
+        totalDeductions: serializeMoney(run.totalDeductions),
+        totalStatutory: serializeMoney(run.totalStatutory),
+        totalNet: serializeMoney(run.totalNet),
         created: linesCreated,
         skipped: skipped,
       },
@@ -735,7 +750,7 @@ export async function PATCH(req: Request) {
           },
         })
 
-        const paidRecipientsList: Array<{ email: string; name: string; netPay: number; id: string }> = []
+        const paidRecipientsList: Array<{ email: string; name: string; netPay: string; id: string }> = []
 
         if (nextStatus === PAYROLL_STATUS.PAID && existingRun.status !== PAYROLL_STATUS.PAID) {
           const employeeIds = existingRun.lines.map((l) => l.employeeId)
@@ -759,7 +774,7 @@ export async function PATCH(req: Request) {
               paidRecipientsList.push({
                 email: emp.user.email,
                 name: emp.user.name || 'Employee',
-                netPay: Number(line.net),
+                netPay: serializeMoney(line.net),
                 id: line.id,
               })
             }
@@ -768,13 +783,13 @@ export async function PATCH(req: Request) {
           await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_PAY, 'PayrollRun', existingRun.id, {
             month: existingRun.month,
             year: existingRun.year,
-            totalNet: Number(existingRun.totalNet),
+            totalNet: serializeMoney(existingRun.totalNet),
           })
         } else if (nextStatus === PAYROLL_STATUS.PROCESSED && existingRun.status !== PAYROLL_STATUS.PROCESSED) {
           await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_PROCESS, 'PayrollRun', existingRun.id, {
             month: existingRun.month,
             year: existingRun.year,
-            totalNet: Number(existingRun.totalNet),
+            totalNet: serializeMoney(existingRun.totalNet),
           })
         } else if (nextStatus === PAYROLL_STATUS.LOCKED && existingRun.status !== PAYROLL_STATUS.LOCKED) {
           await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_LOCK, 'PayrollRun', existingRun.id, {
@@ -801,10 +816,11 @@ export async function PATCH(req: Request) {
         ok: true,
         data: {
           ...updatedRun,
-          totalGross: Number(updatedRun.totalGross),
-          totalDeductions: Number(updatedRun.totalDeductions),
-          totalStatutory: Number(updatedRun.totalStatutory),
-          totalNet: Number(updatedRun.totalNet),
+          // money fields: string by contract (serializeMoney)
+          totalGross: serializeMoney(updatedRun.totalGross),
+          totalDeductions: serializeMoney(updatedRun.totalDeductions),
+          totalStatutory: serializeMoney(updatedRun.totalStatutory),
+          totalNet: serializeMoney(updatedRun.totalNet),
         },
       })
     }
@@ -841,25 +857,25 @@ export async function PATCH(req: Request) {
       body.gross != null ||
       body.net != null
 
-    const basic = body.basic != null ? Number(body.basic) : Number(existing.basic)
-    const allowances = body.allowances != null ? Number(body.allowances) : Number(existing.allowances)
-    const deductions = body.deductions != null ? Number(body.deductions) : Number(existing.deductions)
+    const basicDec = body.basic != null ? toDecimal(body.basic) : toDecimal(existing.basic)
+    const allowancesDec = body.allowances != null ? toDecimal(body.allowances) : toDecimal(existing.allowances)
+    const deductionsDec = body.deductions != null ? toDecimal(body.deductions) : toDecimal(existing.deductions)
 
-    if (basic < 0 || allowances < 0 || deductions < 0 || isNaN(basic) || isNaN(allowances) || isNaN(deductions)) {
+    if (basicDec.isNegative() || allowancesDec.isNegative() || deductionsDec.isNegative()) {
       throw new ApiError(400, 'Payroll amounts cannot be negative')
     }
 
-    const netPay = basic + allowances - deductions
+    const netPayDec = basicDec.add(allowancesDec).sub(deductionsDec)
     const nextStatus = body.status ?? existing.status
 
     const { updatedRec, singlePaidRecipient } = await db.$transaction(async (tx) => {
       const rec = await tx.payroll.update({
         where: { id: targetId },
         data: {
-          basic,
-          allowances,
-          deductions,
-          netPay,
+          basic: basicDec,
+          allowances: allowancesDec,
+          deductions: deductionsDec,
+          netPay: netPayDec,
           status: nextStatus,
           paidAt: nextStatus === PAYROLL_STATUS.PAID ? new Date() : existing.paidAt,
         },
@@ -869,21 +885,23 @@ export async function PATCH(req: Request) {
       if (hasAmountEdit) {
         await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_MANUAL_EDIT, 'Payroll', targetId, {
           before: {
-            basic: Number(existing.basic),
-            allowances: Number(existing.allowances),
-            deductions: Number(existing.deductions),
-            netPay: Number(existing.netPay),
+            // money fields: string by contract (serializeMoney)
+            basic: serializeMoney(existing.basic),
+            allowances: serializeMoney(existing.allowances),
+            deductions: serializeMoney(existing.deductions),
+            netPay: serializeMoney(existing.netPay),
           },
           after: {
-            basic,
-            allowances,
-            deductions,
-            netPay,
+            // money fields: string by contract (serializeMoney)
+            basic: serializeMoney(basicDec),
+            allowances: serializeMoney(allowancesDec),
+            deductions: serializeMoney(deductionsDec),
+            netPay: serializeMoney(netPayDec),
           },
         })
       }
 
-      let paidRecipient: { email: string; name: string; netPay: number; id: string } | null = null
+      let paidRecipient: { email: string; name: string; netPay: string; id: string } | null = null
 
       if (nextStatus === PAYROLL_STATUS.PAID && existing.status !== PAYROLL_STATUS.PAID) {
         const emp = await tx.employee.findUnique({
@@ -906,7 +924,7 @@ export async function PATCH(req: Request) {
           paidRecipient = {
             email: emp.user.email,
             name: emp.user.name || 'Employee',
-            netPay: Number(rec.netPay),
+            netPay: serializeMoney(rec.netPay),
             id: rec.id,
           }
         }
@@ -914,13 +932,13 @@ export async function PATCH(req: Request) {
         await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_PAY, 'Payroll', targetId, {
           month: rec.month,
           year: rec.year,
-          netPay: Number(rec.netPay),
+          netPay: serializeMoney(rec.netPay),
         })
       } else if (nextStatus === PAYROLL_STATUS.PROCESSED && existing.status !== PAYROLL_STATUS.PROCESSED) {
         await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_PROCESS, 'Payroll', targetId, {
           month: rec.month,
           year: rec.year,
-          netPay: Number(rec.netPay),
+          netPay: serializeMoney(rec.netPay),
         })
       } else if (nextStatus === PAYROLL_STATUS.LOCKED && existing.status !== PAYROLL_STATUS.LOCKED) {
         await logAudit(tx, auth.userId, AUDIT_ACTIONS.PAYROLL_LOCK, 'Payroll', targetId, {
@@ -947,10 +965,11 @@ export async function PATCH(req: Request) {
       ok: true,
       data: {
         ...updatedRec,
-        basic: Number(updatedRec.basic),
-        allowances: Number(updatedRec.allowances),
-        deductions: Number(updatedRec.deductions),
-        netPay: Number(updatedRec.netPay),
+        // money fields: string by contract (serializeMoney)
+        basic: serializeMoney(updatedRec.basic),
+        allowances: serializeMoney(updatedRec.allowances),
+        deductions: serializeMoney(updatedRec.deductions),
+        netPay: serializeMoney(updatedRec.netPay),
       },
     })
   })

@@ -3,6 +3,13 @@ import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScop
 import { HR_ROLES, LEAVE_STATUS } from '@/lib/constants'
 import { validateBody, leaveCreateSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
+import {
+  computeAvailableBalance,
+  assertCanApply,
+  getLeaveYear,
+  getLeaveYearBoundaries,
+  LeaveBalanceError,
+} from '@/lib/leave'
 
 // POST /api/leaves - apply for leave (employee or HR on behalf)
 export async function POST(req: Request) {
@@ -28,25 +35,6 @@ export async function POST(req: Request) {
       throw new ApiError(400, 'leaveTypeId, startDate, endDate, reason are required')
     }
 
-    // Validate leaveTypeId exists and belongs to a company where the target employee is assigned (NEW-07)
-    const leaveType = await db.leaveType.findFirst({
-      where: {
-        id: body.leaveTypeId,
-        company: {
-          assignments: {
-            some: { employeeId: targetEmployeeId },
-          },
-        },
-      },
-    })
-    if (!leaveType) {
-      throw new ApiError(400, 'Invalid leaveTypeId: leave type does not exist or does not belong to employee company')
-    }
-
-    if (HR_ROLES.includes(auth.role) && auth.role !== 'SUPER_ADMIN') {
-      const scopedIds = await getScopedCompanyIds(auth)
-      assertCompanyInScope(leaveType.companyId, scopedIds)
-    }
     const start = new Date(body.startDate)
     const end = new Date(body.endDate)
     start.setHours(0, 0, 0, 0)
@@ -72,29 +60,100 @@ export async function POST(req: Request) {
       }
     }
 
-    // Overlap check: reject 409 when request overlaps existing PENDING or APPROVED leave
-    const overlapping = await db.leaveRequest.findFirst({
-      where: {
-        employeeId: targetEmployeeId,
-        status: { in: [LEAVE_STATUS.PENDING, LEAVE_STATUS.APPROVED] },
-        startDate: { lte: end },
-        endDate: { gte: start },
-      },
-    })
-    if (overlapping) {
-      throw new ApiError(409, 'An overlapping pending or approved leave request already exists')
-    }
+    const year = getLeaveYear(start)
+    const { yearStart, yearEnd } = getLeaveYearBoundaries(year)
 
-    const leave = await db.leaveRequest.create({
-      data: {
-        employeeId: targetEmployeeId,
-        leaveTypeId: body.leaveTypeId,
-        startDate: start,
-        endDate: end,
-        days,
-        reason: body.reason,
-      },
+    // Wrap read + balance check + overlap + create in a transaction to prevent race conditions
+    const leave = await db.$transaction(async (tx) => {
+      // Validate leaveTypeId exists and belongs to a company where the target employee is assigned
+      const leaveType = await tx.leaveType.findFirst({
+        where: {
+          id: body.leaveTypeId,
+          company: {
+            assignments: {
+              some: { employeeId: targetEmployeeId },
+            },
+          },
+        },
+      })
+      if (!leaveType) {
+        throw new ApiError(400, 'Invalid leaveTypeId: leave type does not exist or does not belong to employee company')
+      }
+
+      if (HR_ROLES.includes(auth.role) && auth.role !== 'SUPER_ADMIN') {
+        const scopedIds = await getScopedCompanyIds(auth)
+        assertCompanyInScope(leaveType.companyId, scopedIds)
+      }
+
+      // Check balance if leave type is paid; isUnpaid types bypass balance check
+      if (!leaveType.isUnpaid) {
+        const leaveBalance = await tx.leaveBalance.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: targetEmployeeId,
+              leaveTypeId: body.leaveTypeId,
+              year,
+            },
+          },
+        })
+
+        const pendingRequests = await tx.leaveRequest.findMany({
+          where: {
+            employeeId: targetEmployeeId,
+            leaveTypeId: body.leaveTypeId,
+            status: LEAVE_STATUS.PENDING,
+            startDate: { gte: yearStart, lte: yearEnd },
+          },
+          select: { days: true },
+        })
+        const pendingDays = pendingRequests.reduce((sum, r) => sum + r.days, 0)
+
+        const available = computeAvailableBalance({
+          credited: leaveBalance?.credited ?? 0,
+          carriedForward: leaveBalance?.carriedForward ?? 0,
+          used: leaveBalance?.used ?? 0,
+          pending: pendingDays,
+        }).available
+
+        try {
+          assertCanApply({
+            available,
+            requestedDays: days,
+            isUnpaid: false,
+          })
+        } catch (err) {
+          if (err instanceof LeaveBalanceError) {
+            throw new ApiError(400, err.message)
+          }
+          throw err
+        }
+      }
+
+      // Overlap check: reject 409 when request overlaps existing PENDING or APPROVED leave
+      const overlapping = await tx.leaveRequest.findFirst({
+        where: {
+          employeeId: targetEmployeeId,
+          status: { in: [LEAVE_STATUS.PENDING, LEAVE_STATUS.APPROVED] },
+          startDate: { lte: end },
+          endDate: { gte: start },
+        },
+      })
+      if (overlapping) {
+        throw new ApiError(409, 'An overlapping pending or approved leave request already exists')
+      }
+
+      return tx.leaveRequest.create({
+        data: {
+          employeeId: targetEmployeeId,
+          leaveTypeId: body.leaveTypeId,
+          startDate: start,
+          endDate: end,
+          days,
+          reason: body.reason,
+        },
+      })
     })
+
     return Response.json({ ok: true, data: leave }, { status: 201 })
   })
 }

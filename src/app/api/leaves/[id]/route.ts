@@ -1,11 +1,19 @@
 import { db } from '@/lib/db'
+import { Prisma } from '@prisma/client'
 import { requireAuth, handle, ApiError, getScopedCompanyIds } from '@/lib/api-auth'
 import { MANAGEMENT_ROLES, LEAVE_STATUS, ATTENDANCE_STATUS, AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { validateBody, leavePatchSchema } from '@/lib/validation'
 import { sendLeaveStatusEmail } from '@/lib/mail'
+import {
+  computeAvailableBalance,
+  assertCanApply,
+  getLeaveYear,
+  getLeaveYearBoundaries,
+  LeaveBalanceError,
+} from '@/lib/leave'
 
-// PATCH /api/leaves/:id - approve/reject (MANAGER of own reports, HR+)
+// PATCH /api/leaves/:id - approve/reject/cancel (MANAGER of own reports, HR+)
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const auth = await requireAuth(MANAGEMENT_ROLES)
@@ -23,14 +31,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             user: { select: { name: true, email: true } },
           },
         },
-        leaveType: { select: { name: true } },
+        leaveType: { select: { name: true, isUnpaid: true } },
       },
     })
     if (!leave) throw new ApiError(404, 'Leave not found')
 
-    // Terminal state check: status changes only from PENDING
-    if (leave.status !== LEAVE_STATUS.PENDING) {
-      throw new ApiError(400, 'Leave requests in terminal status (APPROVED/REJECTED/CANCELLED) cannot be modified')
+    // State transition check:
+    // PENDING can move to APPROVED, REJECTED, CANCELLED
+    // APPROVED can move to REJECTED, CANCELLED
+    // Terminal states (REJECTED, CANCELLED) cannot be modified
+    if (leave.status !== LEAVE_STATUS.PENDING && leave.status !== LEAVE_STATUS.APPROVED) {
+      throw new ApiError(400, 'Leave requests in terminal status (REJECTED/CANCELLED) cannot be modified')
+    }
+    if (leave.status === LEAVE_STATUS.APPROVED && status === LEAVE_STATUS.APPROVED) {
+      throw new ApiError(400, 'Leave request is already approved')
     }
 
     // Employee cannot review/approve own leave request
@@ -52,6 +66,100 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const updated = await db.$transaction(async (tx) => {
+      const year = getLeaveYear(leave.startDate)
+      const { yearStart, yearEnd } = getLeaveYearBoundaries(year)
+      const isUnpaid = leave.leaveType?.isUnpaid ?? false
+
+      // 1. Balance management
+      if (status === LEAVE_STATUS.APPROVED) {
+        if (!isUnpaid) {
+          const leaveBalance = await tx.leaveBalance.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId: leave.employeeId,
+                leaveTypeId: leave.leaveTypeId,
+                year,
+              },
+            },
+          })
+
+          // Calculate remaining pending requests excluding this request
+          const otherPendingRequests = await tx.leaveRequest.findMany({
+            where: {
+              id: { not: leave.id },
+              employeeId: leave.employeeId,
+              leaveTypeId: leave.leaveTypeId,
+              status: LEAVE_STATUS.PENDING,
+              startDate: { gte: yearStart, lte: yearEnd },
+            },
+            select: { days: true },
+          })
+          const otherPendingDays = otherPendingRequests.reduce((sum, r) => sum + r.days, 0)
+
+          const available = computeAvailableBalance({
+            credited: leaveBalance?.credited ?? 0,
+            carriedForward: leaveBalance?.carriedForward ?? 0,
+            used: leaveBalance?.used ?? 0,
+            pending: otherPendingDays,
+          }).available
+
+          try {
+            assertCanApply({
+              available,
+              requestedDays: leave.days,
+              isUnpaid: false,
+            })
+          } catch (err) {
+            if (err instanceof LeaveBalanceError) {
+              throw new ApiError(400, err.message)
+            }
+            throw err
+          }
+
+          const incDays = new Prisma.Decimal(leave.days.toString())
+          if (leaveBalance) {
+            await tx.leaveBalance.update({
+              where: { id: leaveBalance.id },
+              data: { used: leaveBalance.used.add(incDays) },
+            })
+          } else {
+            await tx.leaveBalance.create({
+              data: {
+                employeeId: leave.employeeId,
+                leaveTypeId: leave.leaveTypeId,
+                year,
+                credited: new Prisma.Decimal('0.00'),
+                used: incDays,
+              },
+            })
+          }
+        }
+      } else if (
+        (status === LEAVE_STATUS.REJECTED || status === LEAVE_STATUS.CANCELLED) &&
+        leave.status === LEAVE_STATUS.APPROVED
+      ) {
+        // Decrement used when previously approved request is rejected or cancelled, floored at 0
+        if (!isUnpaid) {
+          const leaveBalance = await tx.leaveBalance.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId: leave.employeeId,
+                leaveTypeId: leave.leaveTypeId,
+                year,
+              },
+            },
+          })
+          if (leaveBalance) {
+            const decDays = new Prisma.Decimal(leave.days.toString())
+            const nextUsed = Prisma.Decimal.max(new Prisma.Decimal('0.00'), leaveBalance.used.sub(decDays))
+            await tx.leaveBalance.update({
+              where: { id: leaveBalance.id },
+              data: { used: nextUsed },
+            })
+          }
+        }
+      }
+
       const rec = await tx.leaveRequest.update({
         where: { id },
         data: { status, reviewComment: body.comment ?? null, reviewedById: auth.userId, reviewedAt: new Date() },

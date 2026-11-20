@@ -10,6 +10,11 @@ import { CalendarX } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { PaginationControls } from '@/components/pagination-controls'
+import {
+  computeAvailableBalance,
+  getLeaveYear,
+  getLeaveYearBoundaries,
+} from '@/lib/leave'
 
 function statusBadge(s: string) {
   const map: Record<string, string> = {
@@ -44,7 +49,7 @@ export default async function LeavesPage({ searchParams }: { searchParams?: Prom
 
   // Leave types: scoped to authorized employment scope for staff self-service;
   // delegated company scope (UserCompanyScope) for administrative views; never fetch all without explicit group-wide authority.
-  let leaveTypes: { id: string; name: string; daysPerYear: number; companyId: string }[] = []
+  let leaveTypes: { id: string; name: string; daysPerYear: number; companyId: string; isUnpaid: boolean }[] = []
   if (employeeId && employedCompanyIds.length > 0) {
     leaveTypes = await db.leaveType.findMany({
       where: { companyId: { in: employedCompanyIds } },
@@ -59,15 +64,89 @@ export default async function LeavesPage({ searchParams }: { searchParams?: Prom
     }
   }
 
+  // Compute live balances and pending requests for the current leave year
+  const currentYear = getLeaveYear(new Date())
+  const { yearStart, yearEnd } = getLeaveYearBoundaries(currentYear)
+
+  const [balances, pendingRequests] = employeeId
+    ? await Promise.all([
+        db.leaveBalance.findMany({
+          where: { employeeId, year: currentYear },
+        }),
+        db.leaveRequest.findMany({
+          where: {
+            employeeId,
+            status: 'PENDING',
+            startDate: { gte: yearStart, lte: yearEnd },
+          },
+          select: { leaveTypeId: true, days: true },
+        }),
+      ])
+    : [[], []]
+
+  const balanceCards = leaveTypes.map((lt) => {
+    const bal = balances.find((b) => b.leaveTypeId === lt.id)
+    const pendingDays = pendingRequests
+      .filter((r) => r.leaveTypeId === lt.id)
+      .reduce((sum, r) => sum + r.days, 0)
+
+    const credited = bal ? bal.credited.toNumber() : 0
+    const carried = bal ? bal.carriedForward.toNumber() : 0
+    const used = bal ? bal.used.toNumber() : 0
+
+    const available = lt.isUnpaid
+      ? 0
+      : computeAvailableBalance({
+          credited,
+          carriedForward: carried,
+          used,
+          pending: pendingDays,
+        }).available.toNumber()
+
+    return {
+      id: lt.id,
+      name: lt.name,
+      isUnpaid: lt.isUnpaid,
+      available,
+      credited,
+      used,
+      pending: pendingDays,
+    }
+  })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-bold">My Leaves</h1>
         <div className="flex gap-2">
           {isAdmin && <Button asChild variant="outline"><Link href="/leaves/approvals">Review Requests</Link></Button>}
-          {employeeId && leaveTypes.length > 0 && <ApplyLeaveButton leaveTypes={leaveTypes} />}
+          {employeeId && balanceCards.length > 0 && <ApplyLeaveButton leaveTypes={balanceCards} />}
         </div>
       </div>
+
+      {employeeId && balanceCards.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {balanceCards.map((bc) => (
+            <Card key={bc.id} className="p-3 border">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-xs font-medium text-muted-foreground truncate" title={bc.name}>
+                  {bc.name}
+                </span>
+                {bc.isUnpaid && <Badge variant="secondary" className="text-[10px]">Unpaid</Badge>}
+              </div>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-2xl font-bold">{bc.isUnpaid ? '—' : bc.available}</span>
+                {!bc.isUnpaid && <span className="text-xs text-muted-foreground">days left</span>}
+              </div>
+              {!bc.isUnpaid && (
+                <div className="mt-1 text-[11px] text-muted-foreground truncate">
+                  Credited: {bc.credited} · Used: {bc.used}{bc.pending > 0 ? ` · Pending: ${bc.pending}` : ''}
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
