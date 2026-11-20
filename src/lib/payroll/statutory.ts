@@ -12,7 +12,7 @@ export function pfWages(basic: Prisma.Decimal, pfCeiling: boolean = true): Prism
     return ZERO
   }
   if (pfCeiling) {
-    return min(basic, EPF_CONFIG.WAGE_CEILING)
+    return min(basic, EPF_CONFIG.WAGE_CEILING.value)
   }
   return basic
 }
@@ -24,7 +24,7 @@ export function epf(pfEligibleWages: Prisma.Decimal): Prisma.Decimal {
   if (pfEligibleWages.isZero() || pfEligibleWages.isNegative()) {
     return ZERO
   }
-  return round(mul(pfEligibleWages, EPF_CONFIG.EMPLOYEE_RATE))
+  return round(mul(pfEligibleWages, EPF_CONFIG.EMPLOYEE_RATE.value))
 }
 
 /**
@@ -35,8 +35,8 @@ export function eps(pfEligibleWages: Prisma.Decimal): Prisma.Decimal {
     return ZERO
   }
   // EPS contribution is capped at the statutory ceiling (₹15,000 * 8.33% = ₹1,249.50)
-  const cappedWages = min(pfEligibleWages, EPF_CONFIG.WAGE_CEILING)
-  return round(mul(cappedWages, EPF_CONFIG.EMPLOYER_EPS_RATE))
+  const cappedWages = min(pfEligibleWages, EPF_CONFIG.WAGE_CEILING.value)
+  return round(mul(cappedWages, EPF_CONFIG.EMPLOYER_EPS_RATE.value))
 }
 
 /**
@@ -54,7 +54,7 @@ export function esi(
     !esiApplicable ||
     gross.isZero() ||
     gross.isNegative() ||
-    gross.greaterThan(ESI_CONFIG.WAGE_CEILING)
+    gross.greaterThan(ESI_CONFIG.WAGE_CEILING.value)
   ) {
     return {
       employee: ZERO,
@@ -63,8 +63,8 @@ export function esi(
   }
 
   return {
-    employee: round(mul(gross, ESI_CONFIG.EMPLOYEE_RATE)),
-    employer: round(mul(gross, ESI_CONFIG.EMPLOYER_RATE)),
+    employee: round(mul(gross, ESI_CONFIG.EMPLOYEE_RATE.value)),
+    employer: round(mul(gross, ESI_CONFIG.EMPLOYER_RATE.value)),
   }
 }
 

@@ -201,6 +201,15 @@ export function mapPayslipData(record: any): PayslipRenderData {
             category: 'STATUTORY',
           })
           statutoryDeductions += amt
+        } else if (record.tds && Number(record.tds) > 0) {
+          const amt = Number(record.tds)
+          items.push({
+            name: 'Income Tax (TDS)',
+            amount: amt,
+            type: 'DEDUCTION',
+            category: 'STATUTORY',
+          })
+          statutoryDeductions += amt
         }
       }
 
@@ -326,6 +335,7 @@ export async function loadPayslipRecord(id: string) {
       componentBreakdown: line.componentBreakdown,
       daysPaid: line.daysPaid,
       lopDays: line.lopDays,
+      tds: line.tds,
       employee: line.employee,
       generatedBy: null,
     }

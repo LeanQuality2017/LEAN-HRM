@@ -333,6 +333,7 @@ model PayrollLine {
   gross              Decimal  @db.Decimal(12, 2)
   deductions         Decimal  @db.Decimal(12, 2)
   statutory          Decimal  @db.Decimal(12, 2)
+  tds                Decimal? @default(0) @db.Decimal(12, 2)
   net                Decimal  @db.Decimal(12, 2)
   daysPaid           Decimal  @default(0) @db.Decimal(5, 2)
   lopDays            Decimal  @default(0) @db.Decimal(5, 2)

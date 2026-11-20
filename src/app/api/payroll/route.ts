@@ -451,6 +451,7 @@ export async function POST(req: Request) {
             gross: draft.gross,
             deductions: draft.deductions,
             statutory: draft.statutory,
+            tds: draft.tds,
             net: draft.net,
             daysPaid: draft.daysPaid,
             lopDays: draft.lopDays,

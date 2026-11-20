@@ -33,6 +33,7 @@ export interface PayrollLineDraft {
   gross: Prisma.Decimal
   deductions: Prisma.Decimal
   statutory: Prisma.Decimal
+  tds: Prisma.Decimal
   net: Prisma.Decimal
   daysPaid: Prisma.Decimal
   lopDays: Prisma.Decimal
@@ -131,7 +132,7 @@ export function computePayslip(context: RunContext): PayrollLineDraft {
   if (profile.pfApplicable !== false && proratedBasic.greaterThan(ZERO)) {
     const eligiblePfWage = pfWages(proratedBasic, profile.pfCeiling !== false)
     employeePf = epf(eligiblePfWage)
-    employerEpf = round(mul(eligiblePfWage, EPF_CONFIG.EMPLOYER_EPF_RATE))
+    employerEpf = round(mul(eligiblePfWage, EPF_CONFIG.EMPLOYER_EPF_RATE.value))
     employerEps = eps(eligiblePfWage)
   }
 
@@ -213,6 +214,7 @@ export function computePayslip(context: RunContext): PayrollLineDraft {
     gross: round(proratedGross),
     deductions: round(totalDeductions),
     statutory: round(statutory),
+    tds: round(tax),
     net: round(net),
     daysPaid: attendance.paidDays,
     lopDays: attendance.lopDays,

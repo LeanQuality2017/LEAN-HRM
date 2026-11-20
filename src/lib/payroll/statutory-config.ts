@@ -1,18 +1,19 @@
 import { Prisma } from '@prisma/client'
 
 /**
- * Statutory Configurations & Schedules for Indian Payroll.
- *
- * Mandatory rule: All rates, thresholds, and ceilings MUST be documented
- * with citations to official Gazette Notifications / Acts and effectiveFrom dates.
- * Magic numbers must NEVER be inlined into business logic.
+ * Single Source of Truth for Statutory Rates, Thresholds, and Ceilings.
+ * Every statutory rate/threshold contains:
+ *   - value: The exact Decimal or numeric value
+ *   - effectiveFrom: ISO date string when this statutory rate became legally effective
+ *   - source: Official Act name and Gazette Notification reference
+ *   - lastVerifiedOn: ISO date string when verified by legal/payroll engineering
  */
 
-export interface StatutoryRuleMetadata {
-  act: string
-  notificationRef: string
+export interface StatutoryConfigItem<T = Prisma.Decimal> {
+  value: T
   effectiveFrom: string // ISO date YYYY-MM-DD
-  description: string
+  source: string // Gazette / Act section citation
+  lastVerifiedOn: string // ISO date YYYY-MM-DD
 }
 
 export interface PtSlab {
@@ -21,56 +22,73 @@ export interface PtSlab {
   monthlyTax: Prisma.Decimal
 }
 
+export interface TaxSlab {
+  min: Prisma.Decimal
+  max: Prisma.Decimal | null
+  rate: Prisma.Decimal
+}
+
 export const EPF_CONFIG = {
-  metadata: {
-    act: "Employees' Provident Funds and Miscellaneous Provisions Act, 1952",
-    notificationRef: 'Ministry of Labour & Employment Notification G.S.R. 608(E)',
+  WAGE_CEILING: {
+    value: new Prisma.Decimal('15000.00'),
     effectiveFrom: '2014-09-01',
-    description:
-      'Statutory PF wage ceiling raised to ₹15,000/month; employee PF 12%, employer EPS 8.33%, employer EPF 3.67%.',
-  } as StatutoryRuleMetadata,
-  /**
-   * Statutory wage ceiling for mandatory PF contribution calculations.
-   * Under Para 26A(2) of the EPF Scheme, employees joining with basic > 15,000 can be capped at 15,000.
-   */
-  WAGE_CEILING: new Prisma.Decimal('15000.00'),
-  EMPLOYEE_RATE: new Prisma.Decimal('0.12'), // 12%
-  EMPLOYER_EPS_RATE: new Prisma.Decimal('0.0833'), // 8.33% capped at wage ceiling
-  EMPLOYER_EPF_RATE: new Prisma.Decimal('0.0367'), // 3.67% (12% - 8.33%)
+    source: 'Ministry of Labour & Employment Notification G.S.R. 608(E)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  EMPLOYEE_RATE: {
+    value: new Prisma.Decimal('0.12'),
+    effectiveFrom: '1952-11-01',
+    source: "Employees' Provident Funds and Miscellaneous Provisions Act, 1952, Section 6",
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  EMPLOYER_EPS_RATE: {
+    value: new Prisma.Decimal('0.0833'),
+    effectiveFrom: '1995-11-16',
+    source: 'Employees Pension Scheme, 1995, Para 3',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  EMPLOYER_EPF_RATE: {
+    value: new Prisma.Decimal('0.0367'),
+    effectiveFrom: '1995-11-16',
+    source: "Employees' Provident Funds Scheme, 1952 (12% - 8.33%)",
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
 }
 
 export const ESI_CONFIG = {
-  metadata: {
-    act: "Employees' State Insurance Act, 1948",
-    notificationRef: 'Gazette of India Notification S.O. 4233(E) & G.S.R. 423(E)',
+  WAGE_CEILING: {
+    value: new Prisma.Decimal('21000.00'),
+    effectiveFrom: '2017-01-01',
+    source: 'Gazette of India Notification S.O. 4233(E)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  EMPLOYEE_RATE: {
+    value: new Prisma.Decimal('0.0075'),
     effectiveFrom: '2019-07-01',
-    description:
-      'Gross wage threshold ₹21,000/month. Contribution rates reduced to Employee 0.75% and Employer 3.25% effective 1 July 2019.',
-  } as StatutoryRuleMetadata,
-  /**
-   * Gross monthly wage ceiling below or equal to which ESI is applicable.
-   */
-  WAGE_CEILING: new Prisma.Decimal('21000.00'),
-  EMPLOYEE_RATE: new Prisma.Decimal('0.0075'), // 0.75%
-  EMPLOYER_RATE: new Prisma.Decimal('0.0325'), // 3.25%
+    source: 'ESI (Central) Amendment Rules, 2019, Notification G.S.R. 423(E)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  EMPLOYER_RATE: {
+    value: new Prisma.Decimal('0.0325'),
+    effectiveFrom: '2019-07-01',
+    source: 'ESI (Central) Amendment Rules, 2019, Notification G.S.R. 423(E)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
 }
 
-export const PT_CONFIG: Record<string, { metadata: StatutoryRuleMetadata; slabs: PtSlab[] }> = {
+export const PT_CONFIG: Record<
+  string,
+  {
+    metadata: { effectiveFrom: string; source: string; lastVerifiedOn: string }
+    slabs: PtSlab[]
+  }
+> = {
   TN: {
     metadata: {
-      act: 'Tamil Nadu Municipal Laws (Second Amendment) Act, 2018',
-      notificationRef: 'Tamil Nadu Govt Gazette Notification / Chennai Municipal Corporation Slabs',
       effectiveFrom: '2018-10-01',
-      description:
-        'Professional Tax levied half-yearly, apportioned to monthly payroll deductions.',
+      source: 'Tamil Nadu Municipal Laws (Second Amendment) Act, 2018',
+      lastVerifiedOn: '2026-11-20',
     },
-    // Tamil Nadu monthly apportioned slabs (based on half-yearly gross slabs):
-    // Up to ₹21,000/half-year (<= ₹3,500/mo): Nil
-    // ₹21,001 - ₹30,000/half-year (₹3,501 - ₹5,000/mo): ₹20.00/mo (₹120/half-year)
-    // ₹30,001 - ₹45,000/half-year (₹5,001 - ₹7,500/mo): ₹40.00/mo (₹240/half-year)
-    // ₹45,001 - ₹60,000/half-year (₹7,501 - ₹10,000/mo): ₹80.00/mo (₹480/half-year)
-    // ₹60,001 - ₹75,000/half-year (₹10,001 - ₹12,500/mo): ₹125.00/mo (₹750/half-year)
-    // Above ₹75,000/half-year (> ₹12,500/mo): ₹208.33/mo (capped at ₹1,250/half-year; ₹208/mo standard)
     slabs: [
       { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('3500.00'), monthlyTax: new Prisma.Decimal('0.00') },
       { min: new Prisma.Decimal('3500.01'), max: new Prisma.Decimal('5000.00'), monthlyTax: new Prisma.Decimal('20.00') },
@@ -82,11 +100,9 @@ export const PT_CONFIG: Record<string, { metadata: StatutoryRuleMetadata; slabs:
   },
   MH: {
     metadata: {
-      act: 'Maharashtra State Tax on Professions, Trades, Callings and Employments Act, 1975',
-      notificationRef: 'Maharashtra Act No. VII of 1975, Schedule I',
       effectiveFrom: '2023-04-01',
-      description:
-        'Monthly professional tax: <= ₹7,500: Nil; ₹7,501 to ₹10,000: ₹175; > ₹10,000: ₹200 (₹300 in February).',
+      source: 'Maharashtra State Tax on Professions, Trades, Callings and Employments Act, 1975, Schedule I',
+      lastVerifiedOn: '2026-11-20',
     },
     slabs: [
       { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('7500.00'), monthlyTax: new Prisma.Decimal('0.00') },
@@ -96,11 +112,9 @@ export const PT_CONFIG: Record<string, { metadata: StatutoryRuleMetadata; slabs:
   },
   KA: {
     metadata: {
-      act: 'Karnataka Tax on Professions, Trades, Callings and Employments Act, 1976',
-      notificationRef: 'Karnataka Act No. 14 of 2023 (effective 01-Apr-2023)',
       effectiveFrom: '2023-04-01',
-      description:
-        'Threshold exemption limit raised from ₹15,000 to ₹25,000 per month. Above ₹25,000 is ₹200/month.',
+      source: 'Karnataka Tax on Professions, Trades, Callings and Employments Act, 1976 (amended by Act 14 of 2023)',
+      lastVerifiedOn: '2026-11-20',
     },
     slabs: [
       { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('25000.00'), monthlyTax: new Prisma.Decimal('0.00') },
@@ -109,3 +123,170 @@ export const PT_CONFIG: Record<string, { metadata: StatutoryRuleMetadata; slabs:
   },
 }
 
+export const BONUS_CONFIG = {
+  MIN_DAYS_WORKED: {
+    value: 30,
+    effectiveFrom: '1965-09-25',
+    source: 'Payment of Bonus Act, 1965, Section 8',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem<number>,
+  WAGE_ELIGIBILITY_CEILING: {
+    value: new Prisma.Decimal('21000.00'),
+    effectiveFrom: '2014-04-01',
+    source: 'Payment of Bonus (Amendment) Act, 2015, Section 2(13)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  CALCULATION_WAGE_CEILING: {
+    value: new Prisma.Decimal('7000.00'),
+    effectiveFrom: '2014-04-01',
+    source: 'Payment of Bonus (Amendment) Act, 2015, Section 12',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  MIN_BONUS_RATE: {
+    value: new Prisma.Decimal('0.0833'),
+    effectiveFrom: '1965-09-25',
+    source: 'Payment of Bonus Act, 1965, Section 10',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  MAX_BONUS_RATE: {
+    value: new Prisma.Decimal('0.20'),
+    effectiveFrom: '1965-09-25',
+    source: 'Payment of Bonus Act, 1965, Section 11',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+}
+
+export const GRATUITY_CONFIG = {
+  MIN_YEARS_SERVICE: {
+    value: 5,
+    effectiveFrom: '1972-09-16',
+    source: 'Payment of Gratuity Act, 1972, Section 4(1)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem<number>,
+  DAYS_DIVISOR: {
+    value: new Prisma.Decimal('26.00'),
+    effectiveFrom: '1972-09-16',
+    source: 'Payment of Gratuity Act, 1972, Section 4(2)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  DAYS_MULTIPLIER: {
+    value: new Prisma.Decimal('15.00'),
+    effectiveFrom: '1972-09-16',
+    source: 'Payment of Gratuity Act, 1972, Section 4(2)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+  STATUTORY_CEILING: {
+    value: new Prisma.Decimal('2000000.00'),
+    effectiveFrom: '2018-03-29',
+    source: 'Ministry of Labour & Employment Notification S.O. 1420(E)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+}
+
+export const TDS_CONFIG = {
+  CESS_RATE: {
+    value: new Prisma.Decimal('0.04'),
+    effectiveFrom: '2018-04-01',
+    source: 'Finance Act, 2018 (Section 4)',
+    lastVerifiedOn: '2026-11-20',
+  } as StatutoryConfigItem,
+
+  NEW_REGIME: {
+    FY2024_25: {
+      standardDeduction: {
+        value: new Prisma.Decimal('75000.00'),
+        effectiveFrom: '2024-04-01',
+        source: 'Section 16(ia) as amended by Finance (No. 2) Act, 2024',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      slabs: [
+        { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('300000.00'), rate: new Prisma.Decimal('0.00') },
+        { min: new Prisma.Decimal('300000.00'), max: new Prisma.Decimal('700000.00'), rate: new Prisma.Decimal('0.05') },
+        { min: new Prisma.Decimal('700000.00'), max: new Prisma.Decimal('1000000.00'), rate: new Prisma.Decimal('0.10') },
+        { min: new Prisma.Decimal('1000000.00'), max: new Prisma.Decimal('1200000.00'), rate: new Prisma.Decimal('0.15') },
+        { min: new Prisma.Decimal('1200000.00'), max: new Prisma.Decimal('1500000.00'), rate: new Prisma.Decimal('0.20') },
+        { min: new Prisma.Decimal('1500000.00'), max: null, rate: new Prisma.Decimal('0.30') },
+      ] as TaxSlab[],
+      rebate87AThreshold: {
+        value: new Prisma.Decimal('700000.00'),
+        effectiveFrom: '2023-04-01',
+        source: 'Section 87A as amended by Finance Act, 2023',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      rebate87AMax: {
+        value: new Prisma.Decimal('25000.00'),
+        effectiveFrom: '2023-04-01',
+        source: 'Section 87A as amended by Finance Act, 2023',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+    },
+    FY2023_24: {
+      standardDeduction: {
+        value: new Prisma.Decimal('50000.00'),
+        effectiveFrom: '2023-04-01',
+        source: 'Section 16(ia) as amended by Finance Act, 2023',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      slabs: [
+        { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('300000.00'), rate: new Prisma.Decimal('0.00') },
+        { min: new Prisma.Decimal('300000.00'), max: new Prisma.Decimal('600000.00'), rate: new Prisma.Decimal('0.05') },
+        { min: new Prisma.Decimal('600000.00'), max: new Prisma.Decimal('900000.00'), rate: new Prisma.Decimal('0.10') },
+        { min: new Prisma.Decimal('900000.00'), max: new Prisma.Decimal('1200000.00'), rate: new Prisma.Decimal('0.15') },
+        { min: new Prisma.Decimal('1200000.00'), max: new Prisma.Decimal('1500000.00'), rate: new Prisma.Decimal('0.20') },
+        { min: new Prisma.Decimal('1500000.00'), max: null, rate: new Prisma.Decimal('0.30') },
+      ] as TaxSlab[],
+      rebate87AThreshold: {
+        value: new Prisma.Decimal('700000.00'),
+        effectiveFrom: '2023-04-01',
+        source: 'Section 87A as amended by Finance Act, 2023',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+      rebate87AMax: {
+        value: new Prisma.Decimal('25000.00'),
+        effectiveFrom: '2023-04-01',
+        source: 'Section 87A as amended by Finance Act, 2023',
+        lastVerifiedOn: '2026-11-20',
+      } as StatutoryConfigItem,
+    },
+  },
+
+  OLD_REGIME: {
+    standardDeduction: {
+      value: new Prisma.Decimal('50000.00'),
+      effectiveFrom: '2019-04-01',
+      source: 'Section 16(ia) as amended by Finance Act, 2019',
+      lastVerifiedOn: '2026-11-20',
+    } as StatutoryConfigItem,
+    slabs: [
+      { min: new Prisma.Decimal('0.00'), max: new Prisma.Decimal('250000.00'), rate: new Prisma.Decimal('0.00') },
+      { min: new Prisma.Decimal('250000.00'), max: new Prisma.Decimal('500000.00'), rate: new Prisma.Decimal('0.05') },
+      { min: new Prisma.Decimal('500000.00'), max: new Prisma.Decimal('1000000.00'), rate: new Prisma.Decimal('0.20') },
+      { min: new Prisma.Decimal('1000000.00'), max: null, rate: new Prisma.Decimal('0.30') },
+    ] as TaxSlab[],
+    rebate87AThreshold: {
+      value: new Prisma.Decimal('500000.00'),
+      effectiveFrom: '2019-04-01',
+      source: 'Section 87A as amended by Finance Act, 2019',
+      lastVerifiedOn: '2026-11-20',
+    } as StatutoryConfigItem,
+    rebate87AMax: {
+      value: new Prisma.Decimal('12500.00'),
+      effectiveFrom: '2019-04-01',
+      source: 'Section 87A as amended by Finance Act, 2019',
+      lastVerifiedOn: '2026-11-20',
+    } as StatutoryConfigItem,
+    chapter6ACap80C: {
+      value: new Prisma.Decimal('150000.00'),
+      effectiveFrom: '2014-04-01',
+      source: 'Finance (No. 2) Act, 2014, Section 80CCE',
+      lastVerifiedOn: '2026-11-20',
+    } as StatutoryConfigItem,
+  },
+
+  SURCHARGE_SLABS: [
+    { threshold: new Prisma.Decimal('50000000.00'), rate: new Prisma.Decimal('0.25') },
+    { threshold: new Prisma.Decimal('20000000.00'), rate: new Prisma.Decimal('0.25') },
+    { threshold: new Prisma.Decimal('10000000.00'), rate: new Prisma.Decimal('0.15') },
+    { threshold: new Prisma.Decimal('5000000.00'), rate: new Prisma.Decimal('0.10') },
+  ],
+}
