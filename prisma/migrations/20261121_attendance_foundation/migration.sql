@@ -86,6 +86,9 @@ CREATE INDEX "AttendanceRegularisation_companyId_status_idx" ON "AttendanceRegul
 -- CreateIndex
 CREATE UNIQUE INDEX "Attendance_employeeId_companyId_date_key" ON "Attendance"("employeeId", "companyId", "date");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "DailyWorkReport_employeeId_companyId_date_key" ON "DailyWorkReport"("employeeId", "companyId", "date");
+
 -- AddForeignKey
 ALTER TABLE "Shift" ADD CONSTRAINT "Shift_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

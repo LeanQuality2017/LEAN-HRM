@@ -35,35 +35,9 @@ export async function runDryRun() {
       },
     })
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err)
-    if (errorMsg.includes("Can't reach database server") || (err as { name?: string })?.name === 'PrismaClientInitializationError') {
-      if (isJson) {
-        console.log(
-          JSON.stringify(
-            {
-              status: 'offline',
-              message: 'Database server is not running or unreachable at configured DATABASE_URL',
-              totalRows: 0,
-              distinctKeys: 0,
-              collisionsCount: 0,
-              collisions: [],
-            },
-            null,
-            2
-          )
-        )
-      } else {
-        console.log('=== Attendance Uniqueness Dry-Run Collision Report ===')
-        console.log('⚠️ Database connection unavailable: PostgreSQL is offline or unreachable.')
-        console.log('Total Attendance Rows:  0 (DB offline)')
-        console.log('Distinct New Keys:      0')
-        console.log('Collisions (Count > 1): 0')
-        console.log('------------------------------------------------------')
-        console.log('Note: To execute dry-run collision check on live records, start the PostgreSQL database.')
-      }
-      return { totalRows: 0, distinctKeys: 0, collisions: 0 }
-    }
-    throw err
+    console.error('FATAL: uniqueness cannot be verified without a database')
+    console.error('VERDICT: UNKNOWN (not safe, not unsafe)')
+    process.exit(2)
   }
 
   const totalRows = attendances.length
@@ -147,8 +121,9 @@ export async function runDryRun() {
 if (process.argv[1]?.includes('attendance-uniqueness-dryrun')) {
   runDryRun()
     .then(() => process.exit(0))
-    .catch((err) => {
-      console.error('Error during dry-run:', err)
-      process.exit(1)
+    .catch(() => {
+      console.error('FATAL: uniqueness cannot be verified without a database')
+      console.error('VERDICT: UNKNOWN (not safe, not unsafe)')
+      process.exit(2)
     })
 }

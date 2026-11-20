@@ -436,6 +436,7 @@ model DailyWorkReport {
   comments WorkReportComment[]
 
   @@unique([employeeId, date])
+  @@unique([employeeId, companyId, date], name: "employeeId_companyId_date")
   @@index([companyId])
   @@index([date])
 }

@@ -4,6 +4,7 @@ import { requireAuth, handle, ApiError } from '@/lib/api-auth'
 import { ADMIN_ROLES, ATTENDANCE_STATUS, AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { biometricSyncSchema } from '@/lib/validation'
+import { resolveAttendanceCompanyId } from '@/lib/attendance'
 
 // NOTE: POST /api/attendance/sync is a machine-to-machine biometric device endpoint
 // exempt from NextAuth session authentication BY DESIGN; authenticated exclusively via x-api-key header.
@@ -82,27 +83,25 @@ export async function POST(req: Request) {
         continue
       }
 
-      const primaryAssignment = emp.assignments.find((a) => a.isPrimary) || emp.assignments[0]
-      if (!primaryAssignment) {
+      // Resolve target company ID via resolveAttendanceCompanyId (prioritizes active assignment to punch.companyId, else primary/earliest)
+      let targetCompanyId: string
+      try {
+        targetCompanyId = await resolveAttendanceCompanyId(emp.id, punch.companyId)
+      } catch {
         errors.push({ employeeCode: punch.employeeCode, index: i, reason: 'No company assignment found for employee' })
         skipped++
         continue
       }
 
-      let targetCompanyId = punch.companyId
-      if (!targetCompanyId) {
-        targetCompanyId = primaryAssignment.companyId
-      } else {
-        const isAssigned = emp.assignments.some((a) => a.companyId === targetCompanyId)
-        if (!isAssigned) {
-          errors.push({
-            employeeCode: punch.employeeCode,
-            index: i,
-            reason: `Company ${targetCompanyId} not in employee assignments`,
-          })
-          skipped++
-          continue
-        }
+      // If a specific company was requested in the punch, verify the resolved assignment matches
+      if (punch.companyId && targetCompanyId !== punch.companyId) {
+        errors.push({
+          employeeCode: punch.employeeCode,
+          index: i,
+          reason: `Company ${punch.companyId} not in employee assignments`,
+        })
+        skipped++
+        continue
       }
 
       const targetDate = new Date(`${punch.date}T00:00:00.000Z`)
@@ -111,8 +110,9 @@ export async function POST(req: Request) {
       await db.$transaction(async (tx) => {
         const existing = await tx.attendance.findUnique({
           where: {
-            employeeId_date: {
+            employeeId_companyId_date: {
               employeeId: emp.id,
+              companyId: targetCompanyId,
               date: targetDate,
             },
           },
@@ -128,7 +128,7 @@ export async function POST(req: Request) {
           await tx.attendance.create({
             data: {
               employeeId: emp.id,
-              companyId: targetCompanyId!,
+              companyId: targetCompanyId,
               date: targetDate,
               checkIn: punch.checkIn ? new Date(punch.checkIn) : null,
               checkOut: punch.checkOut ? new Date(punch.checkOut) : null,
@@ -165,7 +165,13 @@ export async function POST(req: Request) {
 
           if (fieldsChanged) {
             await tx.attendance.update({
-              where: { id: existing.id },
+              where: {
+                employeeId_companyId_date: {
+                  employeeId: emp.id,
+                  companyId: targetCompanyId,
+                  date: targetDate,
+                },
+              },
               data: updateData,
             })
             updated++

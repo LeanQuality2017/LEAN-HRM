@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { fmtDate, fmtMoney, ROLE_LABELS } from '@/lib/constants'
+import { resolveAttendanceCompanyId } from '@/lib/attendance'
 import {
   Users, CalendarCheck, CalendarX, FileText, Wallet, Briefcase,
   GraduationCap, Megaphone, ClipboardList, IndianRupee, Handshake, ArrowRight,
@@ -259,7 +260,18 @@ export default async function DashboardPage() {
   }
 
   // ============ EMPLOYEE DASHBOARD ============
-  const todayAtt = employeeId ? await db.attendance.findUnique({ where: { employeeId_date: { employeeId, date: today } } }) : null
+  const todayAtt = employeeId
+    ? await (async () => {
+        try {
+          const companyId = await resolveAttendanceCompanyId(employeeId)
+          return await db.attendance.findUnique({
+            where: { employeeId_companyId_date: { employeeId, companyId, date: today } },
+          })
+        } catch {
+          return null
+        }
+      })()
+    : null
   const [myLeaves, myReports, latestPayslip, myKpis] = await Promise.all([
     employeeId ? db.leaveRequest.count({ where: { employeeId, status: 'PENDING' } }) : Promise.resolve(0),
     employeeId ? db.dailyWorkReport.count({ where: { employeeId, status: 'SUBMITTED' } }) : Promise.resolve(0),

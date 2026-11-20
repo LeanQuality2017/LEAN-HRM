@@ -3,6 +3,7 @@ import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScop
 import { MANAGEMENT_ROLES, REPORT_STATUS } from '@/lib/constants'
 import { validateBody, workReportCreateSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
+import { resolveAttendanceCompanyId } from '@/lib/attendance'
 
 // POST /api/work-reports - submit daily EOD report
 export async function POST(req: Request) {
@@ -14,22 +15,43 @@ export async function POST(req: Request) {
     const date = new Date(body.date)
     date.setHours(0, 0, 0, 0)
 
+    // Resolve primary/earliest company assignment
+    let companyId: string
+    try {
+      companyId = await resolveAttendanceCompanyId(auth.employeeId)
+    } catch {
+      throw new ApiError(400, 'No company assignment found')
+    }
+
     const existing = await db.dailyWorkReport.findUnique({
-      where: { employeeId_date: { employeeId: auth.employeeId, date } },
+      where: {
+        employeeId_companyId_date: {
+          employeeId: auth.employeeId,
+          companyId,
+          date,
+        },
+      },
     })
     if (existing && existing.status === REPORT_STATUS.REVIEWED) {
       throw new ApiError(400, 'Reviewed work reports are immutable and cannot be re-submitted')
     }
 
-    const primary = await db.employeeCompanyAssignment.findFirst({ where: { employeeId: auth.employeeId, isPrimary: true } })
-    if (!primary) throw new ApiError(400, 'No company assignment found')
-
     const report = await db.dailyWorkReport.upsert({
-      where: { employeeId_date: { employeeId: auth.employeeId, date } },
+      where: {
+        employeeId_companyId_date: {
+          employeeId: auth.employeeId,
+          companyId,
+          date,
+        },
+      },
       update: { tasks: body.tasks, hoursWorked: body.hoursWorked ?? 8, blockers: body.blockers ?? null, status: REPORT_STATUS.SUBMITTED },
       create: {
-        employeeId: auth.employeeId, companyId: primary.companyId, date,
-        tasks: body.tasks, hoursWorked: body.hoursWorked ?? 8, blockers: body.blockers ?? null,
+        employeeId: auth.employeeId,
+        companyId,
+        date,
+        tasks: body.tasks,
+        hoursWorked: body.hoursWorked ?? 8,
+        blockers: body.blockers ?? null,
       },
     })
     return Response.json({ ok: true, data: report }, { status: existing ? 200 : 201 })

@@ -3,6 +3,7 @@ import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScop
 import { HR_ROLES, ATTENDANCE_STATUSES, ATTENDANCE_SOURCES, ATTENDANCE_STATUS } from '@/lib/constants'
 import { validateBody, attendancePatchSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
+import { resolveAttendanceCompanyId } from '@/lib/attendance'
 
 // POST /api/attendance - web check-in / check-out toggle for today
 export async function POST() {
@@ -14,26 +15,61 @@ export async function POST() {
     const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
     today.setHours(0, 0, 0, 0)
 
+    // Resolve primary/earliest assignment for web check-in (employee self-punch)
+    let companyId: string
+    try {
+      companyId = await resolveAttendanceCompanyId(auth.employeeId)
+    } catch {
+      throw new ApiError(400, 'No company assignment found')
+    }
+
     const existing = await db.attendance.findUnique({
-      where: { employeeId_date: { employeeId: auth.employeeId, date: today } },
+      where: {
+        employeeId_companyId_date: {
+          employeeId: auth.employeeId,
+          companyId,
+          date: today,
+        },
+      },
     })
 
     if (!existing || !existing.checkIn) {
       const status = now.getHours() >= 10 ? ATTENDANCE_STATUS.LATE : ATTENDANCE_STATUS.PRESENT
-      let companyId = existing?.companyId
-      if (!companyId) {
-        const primary = await db.employeeCompanyAssignment.findFirst({ where: { employeeId: auth.employeeId, isPrimary: true } })
-        companyId = primary?.companyId
-      }
-      if (!companyId) throw new ApiError(400, 'No company assignment found')
       const rec = existing
-        ? await db.attendance.update({ where: { id: existing.id }, data: { checkIn: now, status, source: 'WEB' } })
-        : await db.attendance.create({ data: { employeeId: auth.employeeId, companyId, date: today, checkIn: now, status, source: 'WEB' } })
+        ? await db.attendance.update({
+            where: {
+              employeeId_companyId_date: {
+                employeeId: auth.employeeId,
+                companyId,
+                date: today,
+              },
+            },
+            data: { checkIn: now, status, source: 'WEB' },
+          })
+        : await db.attendance.create({
+            data: {
+              employeeId: auth.employeeId,
+              companyId,
+              date: today,
+              checkIn: now,
+              status,
+              source: 'WEB',
+            },
+          })
       return Response.json({ ok: true, action: 'CHECK_IN', attendance: rec })
     }
 
     if (!existing.checkOut) {
-      const rec = await db.attendance.update({ where: { id: existing.id }, data: { checkOut: now } })
+      const rec = await db.attendance.update({
+        where: {
+          employeeId_companyId_date: {
+            employeeId: auth.employeeId,
+            companyId,
+            date: today,
+          },
+        },
+        data: { checkOut: now },
+      })
       return Response.json({ ok: true, action: 'CHECK_OUT', attendance: rec })
     }
 

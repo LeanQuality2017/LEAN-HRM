@@ -11,6 +11,7 @@ import { AttendanceEditButton } from './edit-button'
 import { fmtDate, fmtTime, HR_ROLES } from '@/lib/constants'
 import { CalendarCheck, Download, Search } from 'lucide-react'
 import { PaginationControls } from '@/components/pagination-controls'
+import { resolveAttendanceCompanyId } from '@/lib/attendance'
 
 function statusBadge(s: string) {
   const map: Record<string, string> = {
@@ -91,7 +92,18 @@ export default async function AttendancePage({ searchParams }: { searchParams: P
     }),
   ])
 
-  const myToday = employeeId ? await db.attendance.findUnique({ where: { employeeId_date: { employeeId, date: today } } }) : null
+  const myToday = employeeId
+    ? await (async () => {
+        try {
+          const companyId = await resolveAttendanceCompanyId(employeeId)
+          return await db.attendance.findUnique({
+            where: { employeeId_companyId_date: { employeeId, companyId, date: today } },
+          })
+        } catch {
+          return null
+        }
+      })()
+    : null
 
   const exportFrom = sp.date || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
   const exportTo = sp.date || new Date().toISOString().slice(0, 10)

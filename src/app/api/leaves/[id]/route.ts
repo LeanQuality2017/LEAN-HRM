@@ -12,6 +12,7 @@ import {
   getLeaveYearBoundaries,
   LeaveBalanceError,
 } from '@/lib/leave'
+import { resolveAttendanceCompanyId } from '@/lib/attendance'
 
 // PATCH /api/leaves/:id - approve/reject/cancel (MANAGER of own reports, HR+)
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -31,7 +32,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             user: { select: { name: true, email: true } },
           },
         },
-        leaveType: { select: { name: true, isUnpaid: true } },
+        leaveType: { select: { name: true, isUnpaid: true, companyId: true } },
       },
     })
     if (!leave) throw new ApiError(404, 'Leave not found')
@@ -170,17 +171,54 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       // On approval, mark attendance as LEAVE for the date range (best-effort)
       if (status === LEAVE_STATUS.APPROVED) {
-        const start = new Date(leave.startDate), end = new Date(leave.endDate)
-        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-          const day = new Date(d)
-          day.setHours(0, 0, 0, 0)
-          const existing = await tx.attendance.findUnique({ where: { employeeId_date: { employeeId: leave.employeeId, date: day } } })
-          if (existing) {
-            await tx.attendance.update({ where: { id: existing.id }, data: { status: ATTENDANCE_STATUS.LEAVE, note: 'Approved leave' } })
-          } else {
-            const primary = await tx.employeeCompanyAssignment.findFirst({ where: { employeeId: leave.employeeId, isPrimary: true } })
-            if (primary) {
-              await tx.attendance.create({ data: { employeeId: leave.employeeId, companyId: primary.companyId, date: day, status: ATTENDANCE_STATUS.LEAVE, source: 'MANUAL', note: 'Approved leave' } })
+        // Resolve company assignment: use leave type's company if employee assigned to it, else primary/earliest
+        let attendanceCompanyId: string
+        try {
+          attendanceCompanyId = await resolveAttendanceCompanyId(
+            leave.employeeId,
+            leave.leaveType?.companyId,
+            tx
+          )
+        } catch {
+          attendanceCompanyId = ''
+        }
+
+        if (attendanceCompanyId) {
+          const start = new Date(leave.startDate), end = new Date(leave.endDate)
+          for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
+            const day = new Date(d)
+            day.setHours(0, 0, 0, 0)
+            const existing = await tx.attendance.findUnique({
+              where: {
+                employeeId_companyId_date: {
+                  employeeId: leave.employeeId,
+                  companyId: attendanceCompanyId,
+                  date: day,
+                },
+              },
+            })
+            if (existing) {
+              await tx.attendance.update({
+                where: {
+                  employeeId_companyId_date: {
+                    employeeId: leave.employeeId,
+                    companyId: attendanceCompanyId,
+                    date: day,
+                  },
+                },
+                data: { status: ATTENDANCE_STATUS.LEAVE, note: 'Approved leave' },
+              })
+            } else {
+              await tx.attendance.create({
+                data: {
+                  employeeId: leave.employeeId,
+                  companyId: attendanceCompanyId,
+                  date: day,
+                  status: ATTENDANCE_STATUS.LEAVE,
+                  source: 'MANUAL',
+                  note: 'Approved leave',
+                },
+              })
             }
           }
         }
