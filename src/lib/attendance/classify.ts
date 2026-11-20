@@ -125,8 +125,9 @@ export function classifyDay({
   const scheduledStartMs = new Date(startUtc).getTime()
   const scheduledEndMs = new Date(endUtc).getTime()
 
-  const lateMs = inMs - scheduledStartMs
-  const lateMinutes = lateMs > 0
+  const lateThresholdMs = scheduledStartMs + (shift.graceMinutes ?? 0) * 60 * 1000
+  const lateMs = inMs - lateThresholdMs
+  const lateMinutes = isLate(punches.checkInUtc, dateKey, shift, timeZone) && lateMs > 0
     ? new Prisma.Decimal(Math.floor(lateMs / 60000)).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
     : ZERO
 
@@ -135,8 +136,8 @@ export function classifyDay({
     ? new Prisma.Decimal(Math.floor(earlyExitMs / 60000)).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
     : ZERO
 
-  // HALF_DAY (worked < halfDayThresholdMinutes)
-  if (grossWorkedMinutes < threshold) {
+  // HALF_DAY (worked < halfDayThresholdMinutes, only evaluated after checkout)
+  if (punches.checkOutUtc && grossWorkedMinutes < threshold) {
     return {
       status: 'HALF_DAY',
       lateMinutes,

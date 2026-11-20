@@ -156,19 +156,27 @@ model Attendance {
   date       DateTime
   checkIn    DateTime?
   checkOut   DateTime?
-  status     String    @default("PRESENT") // PRESENT | LATE | HALF_DAY | ABSENT | LEAVE | WFH | HOLIDAY
-  source     String    @default("WEB")     // WEB | BIOMETRIC | MANUAL
-  note       String?
-  createdAt  DateTime  @default(now())
+  status           String    @default("PRESENT") // PRESENT | LATE | HALF_DAY | ABSENT | LEAVE | WFH | HOLIDAY
+  source           String    @default("WEB")     // WEB | BIOMETRIC | MANUAL
+  note             String?
+  lateMinutes      Int       @default(0)
+  earlyExitMinutes Int       @default(0)
+  otMinutes        Int       @default(0)
+  isLop            Boolean   @default(false)
+  shiftId          String?
+  classifiedAt     DateTime?
+  createdAt        DateTime  @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   company  Company  @relation(fields: [companyId], references: [id])
+  shift    Shift?   @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, date])
   @@unique([employeeId, companyId, date], name: "employeeId_companyId_date")
   @@index([companyId])
   @@index([date])
   @@index([companyId, date])
+  @@index([shiftId])
 }
 
 model LeaveType {
@@ -755,6 +763,7 @@ model Shift {
 
   company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   assignments   EmployeeShiftAssignment[]
+  attendance    Attendance[]
 
   @@unique([companyId, name])
   @@index([companyId])

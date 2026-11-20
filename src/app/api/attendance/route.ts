@@ -3,7 +3,7 @@ import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScop
 import { HR_ROLES, ATTENDANCE_STATUSES, ATTENDANCE_SOURCES, ATTENDANCE_STATUS } from '@/lib/constants'
 import { validateBody, attendancePatchSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
-import { resolveAttendanceCompanyId } from '@/lib/attendance'
+import { resolveAttendanceCompanyId, resolveShiftForDate, classifyDay, zonedDateKey, type ResolvedShift } from '@/lib/attendance'
 
 // POST /api/attendance - web check-in / check-out toggle for today
 export async function POST() {
@@ -24,6 +24,35 @@ export async function POST() {
       throw new ApiError(400, 'No company assignment found')
     }
 
+    // Resolve shift for employee on today's date
+    let shift: ResolvedShift
+    try {
+      const resolved = await resolveShiftForDate(auth.employeeId, companyId, today, db)
+      shift = resolved.shift
+    } catch (err) {
+      console.error('[attendance-shift]', err)
+      throw new ApiError(400, err instanceof Error ? err.message : 'No shift configured')
+    }
+
+    // Query holiday for company and date
+    const holiday = await db.holiday.findUnique({
+      where: {
+        companyId_date: {
+          companyId,
+          date: today,
+        },
+      },
+    })
+    const isHoliday = !!holiday
+
+    // Compute isWeekoff from shift/company rule (no weekoff model exists yet -> false per spec)
+    const isWeekoff = false
+
+    // Resolve company timezone
+    const payRule = await db.companyPayRule.findUnique({ where: { companyId } })
+    const timeZone = payRule?.timezone || 'Asia/Kolkata'
+    const dateKey = zonedDateKey(now.toISOString(), timeZone)
+
     const existing = await db.attendance.findUnique({
       where: {
         employeeId_companyId_date: {
@@ -35,7 +64,29 @@ export async function POST() {
     })
 
     if (!existing || !existing.checkIn) {
-      const status = now.getHours() >= 10 ? ATTENDANCE_STATUS.LATE : ATTENDANCE_STATUS.PRESENT
+      const classification = classifyDay({
+        dateKey,
+        isHoliday,
+        isWeekoff,
+        punches: {
+          checkInUtc: now.toISOString(),
+          checkOutUtc: null,
+          source: 'WEB',
+        },
+        shift,
+        timeZone,
+      })
+
+      const classificationData = {
+        status: classification.status,
+        lateMinutes: classification.lateMinutes.toNumber(),
+        earlyExitMinutes: classification.earlyExitMinutes.toNumber(),
+        otMinutes: Math.round(classification.otHours.mul(60).toNumber()),
+        isLop: classification.isLop,
+        shiftId: shift.id,
+        classifiedAt: now,
+      }
+
       const rec = existing
         ? await db.attendance.update({
             where: {
@@ -45,7 +96,11 @@ export async function POST() {
                 date: today,
               },
             },
-            data: { checkIn: now, status, source: 'WEB' },
+            data: {
+              checkIn: now,
+              source: 'WEB',
+              ...classificationData,
+            },
           })
         : await db.attendance.create({
             data: {
@@ -53,14 +108,30 @@ export async function POST() {
               companyId,
               date: today,
               checkIn: now,
-              status,
               source: 'WEB',
+              ...classificationData,
             },
           })
       return Response.json({ ok: true, action: 'CHECK_IN', attendance: rec })
     }
 
     if (!existing.checkOut) {
+      const checkInUtc = existing.checkIn ? existing.checkIn.toISOString() : now.toISOString()
+      const checkOutUtc = now.toISOString()
+
+      const classification = classifyDay({
+        dateKey,
+        isHoliday,
+        isWeekoff,
+        punches: {
+          checkInUtc,
+          checkOutUtc,
+          source: existing.source ?? 'WEB',
+        },
+        shift,
+        timeZone,
+      })
+
       const rec = await db.attendance.update({
         where: {
           employeeId_companyId_date: {
@@ -69,7 +140,16 @@ export async function POST() {
             date: today,
           },
         },
-        data: { checkOut: now },
+        data: {
+          checkOut: now,
+          status: classification.status,
+          lateMinutes: classification.lateMinutes.toNumber(),
+          earlyExitMinutes: classification.earlyExitMinutes.toNumber(),
+          otMinutes: Math.round(classification.otHours.mul(60).toNumber()),
+          isLop: classification.isLop,
+          shiftId: shift.id,
+          classifiedAt: now,
+        },
       })
       return Response.json({ ok: true, action: 'CHECK_OUT', attendance: rec })
     }

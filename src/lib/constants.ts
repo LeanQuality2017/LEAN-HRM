@@ -18,7 +18,7 @@ export const ROLE_LABELS: Record<string, string> = {
   STUDENT: 'Student',
 }
 
-export const ATTENDANCE_STATUSES = ['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'LEAVE', 'WFH', 'HOLIDAY'] as const
+export const ATTENDANCE_STATUSES = ['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'LEAVE', 'WFH', 'HOLIDAY', 'WEEK_OFF'] as const
 export const ATTENDANCE_SOURCES = ['WEB', 'BIOMETRIC', 'MANUAL'] as const
 export const LEAVE_STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'] as const
 export const PAYROLL_STATUSES = ['DRAFT', 'LOCKED', 'PROCESSED', 'PAID'] as const
@@ -41,6 +41,7 @@ export const ATTENDANCE_STATUS = {
   LEAVE: 'LEAVE',
   WFH: 'WFH',
   HOLIDAY: 'HOLIDAY',
+  WEEK_OFF: 'WEEK_OFF',
 } as const
 
 export const LEAVE_STATUS = {
