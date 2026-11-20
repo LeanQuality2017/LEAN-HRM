@@ -146,11 +146,25 @@ async function main() {
       const assignments = await db.employeeCompanyAssignment.findMany({ where: { employeeId: e.id } })
       for (const a of assignments) {
         if (Math.random() < 0.5) continue // one record per company per ~2 days
-        await db.attendance.create({ data: {
-          employeeId: e.id, companyId: a.companyId, date,
-          checkIn: at(date, inH, inM), checkOut: at(date, outH, 15),
-          status: late ? 'LATE' : 'PRESENT', source: Math.random() < 0.3 ? 'BIOMETRIC' : 'WEB',
-        }})
+        await db.attendance.upsert({
+          where: {
+            employeeId_companyId_date: {
+              employeeId: e.id,
+              companyId: a.companyId,
+              date,
+            },
+          },
+          update: {},
+          create: {
+            employeeId: e.id,
+            companyId: a.companyId,
+            date,
+            checkIn: at(date, inH, inM),
+            checkOut: at(date, outH, 15),
+            status: late ? 'LATE' : 'PRESENT',
+            source: Math.random() < 0.3 ? 'BIOMETRIC' : 'WEB',
+          },
+        })
         break
       }
     }
@@ -159,7 +173,13 @@ async function main() {
   const today = daysAgo(0)
   for (const e of [eA1, eShared]) {
     await db.attendance.upsert({
-      where: { employeeId_date: { employeeId: e.id, date: today } },
+      where: {
+        employeeId_companyId_date: {
+          employeeId: e.id,
+          companyId: alpha.id,
+          date: today,
+        },
+      },
       update: {},
       create: { employeeId: e.id, companyId: alpha.id, date: today, checkIn: at(today, 9, 5), status: 'PRESENT', source: 'WEB' },
     })
