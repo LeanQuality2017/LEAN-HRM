@@ -9,7 +9,7 @@ import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 
 interface AuditItem {
   id: string
-  userId: string
+  userId: string | null
   action: string
   entity: string
   entityId: string | null
@@ -20,7 +20,7 @@ interface AuditItem {
     name: string
     email: string
     role: string
-  }
+  } | null
 }
 
 export function AuditView({

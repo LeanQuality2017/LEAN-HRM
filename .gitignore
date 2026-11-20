@@ -62,7 +62,7 @@ server.log
 .git_old_leaky_backup/
 .zscripts/
 examples/
-tests/
+!tests/
 !scripts/tests/
 !scripts/tests/probe-test-db.mjs
 tool-results/

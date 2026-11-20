@@ -11,23 +11,42 @@ export async function logAudit(
   entityId?: string | null,
   meta?: unknown
 ) {
-  let metaStr: string | null = null
+  let metaPayload: Record<string, unknown> = {}
 
   if (meta != null) {
     if (typeof meta === 'string') {
-      metaStr = meta
-    } else {
       try {
-        metaStr = JSON.stringify(meta)
+        const parsed = JSON.parse(meta)
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          metaPayload = parsed
+        } else {
+          metaPayload = { data: meta }
+        }
       } catch {
-        metaStr = String(meta)
+        metaPayload = { message: meta }
       }
+    } else if (typeof meta === 'object' && !Array.isArray(meta)) {
+      metaPayload = { ...(meta as Record<string, unknown>) }
+    } else {
+      metaPayload = { data: meta }
     }
+  }
+
+  // Preserve actor userId snapshot inside meta so the audit record remains readable even if user is deleted
+  if (userId && !metaPayload.actorId) {
+    metaPayload.actorId = userId
+  }
+
+  let metaStr: string | null = null
+  try {
+    metaStr = JSON.stringify(metaPayload)
+  } catch {
+    metaStr = String(meta)
   }
 
   return client.auditLog.create({
     data: {
-      userId,
+      userId: userId || null,
       action,
       entity,
       entityId: entityId ?? null,

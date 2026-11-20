@@ -2,24 +2,35 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { db } from '@/lib/db'
 import { requirePageAuth } from '@/lib/page-auth'
 import { isPayrollEnabled } from '@/lib/feature-gates'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { fmtDate, fmtMoney, HR_ROLES } from '@/lib/constants'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Download } from 'lucide-react'
 import { PrintButton } from './print-button'
+import { loadPayslipRecord } from '@/lib/payroll/payslip-doc'
 
 const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ]
 
 function statusBadge(s: string) {
   const map: Record<string, string> = {
     DRAFT: 'bg-gray-100 text-gray-700',
+    LOCKED: 'bg-blue-100 text-blue-800',
     PROCESSED: 'bg-amber-100 text-amber-800',
     PAID: 'bg-emerald-100 text-emerald-800',
   }
@@ -35,20 +46,8 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
 
   const { id } = await params
 
-  const payslip = await db.payroll.findUnique({
-    where: { id },
-    include: {
-      employee: {
-        include: {
-          user: { select: { id: true, name: true, email: true } },
-          assignments: {
-            include: { company: true },
-          },
-        },
-      },
-      generatedBy: { select: { name: true, email: true } },
-    },
-  })
+  // Reuse existing payslip data path without query duplication
+  const payslip = await loadPayslipRecord(id)
 
   if (!payslip) {
     redirect('/payroll')
@@ -60,8 +59,8 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
   if (role === 'SUPER_ADMIN') {
     isAuthorized = true
   } else if (HR_ROLES.includes(role)) {
-    const empCompanyIds = payslip.employee.assignments.map((a) => a.companyId)
-    if (administeredCompanyIds && empCompanyIds.some((cid) => administeredCompanyIds.includes(cid))) {
+    const empCompanyIds = payslip.employee.assignments.map((a: any) => a.companyId)
+    if (administeredCompanyIds && empCompanyIds.some((cid: string) => administeredCompanyIds.includes(cid))) {
       isAuthorized = true
     }
   } else if (isOwner && role !== 'MANAGER') {
@@ -76,8 +75,11 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
   const allowances = Number(payslip.allowances)
   const deductions = Number(payslip.deductions)
   const netPay = Number(payslip.netPay)
+  const daysPaid = Number((payslip as any).daysPaid ?? 30)
+  const lopDays = Number((payslip as any).lopDays ?? 0)
 
-  const primaryAssignment = payslip.employee.assignments.find((a) => a.isPrimary) || payslip.employee.assignments[0]
+  const primaryAssignment =
+    payslip.employee.assignments.find((a: any) => a.isPrimary) || payslip.employee.assignments[0]
   const company = primaryAssignment?.company
 
   return (
@@ -107,7 +109,15 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
             Back to Payroll
           </Link>
         </Button>
-        <PrintButton />
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm" className="gap-1.5">
+            <a href={`/api/payroll/${id}/pdf`} target="_blank" rel="noopener noreferrer">
+              <Download className="h-4 w-4" />
+              Download PDF
+            </a>
+          </Button>
+          <PrintButton />
+        </div>
       </div>
 
       <Card className="print-card border bg-card">
@@ -116,7 +126,11 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
           <div className="flex justify-between items-start border-b pb-4">
             <div>
               <h2 className="text-xl font-bold text-foreground">{company?.name || 'UniHR'}</h2>
-              {company?.code && <p className="text-xs text-muted-foreground uppercase tracking-wider">Current Primary Assignment: {company.code} (Historical Issuer Unrecorded)</p>}
+              {company?.code && (
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                  Current Primary Assignment: {company.code}
+                </p>
+              )}
               {company?.address && <p className="text-xs text-muted-foreground mt-0.5">{company.address}</p>}
               <div className="text-xs text-muted-foreground flex gap-3 mt-1">
                 {company?.phone && <span>Tel: {company.phone}</span>}
@@ -124,7 +138,9 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
               </div>
             </div>
             <div className="text-right">
-              <span className="text-xs font-semibold uppercase tracking-wider px-2.5 py-1 bg-muted rounded">Payslip</span>
+              <span className="text-xs font-semibold uppercase tracking-wider px-2.5 py-1 bg-muted rounded">
+                Payslip
+              </span>
               <p className="text-base font-bold text-foreground mt-2">
                 {MONTH_NAMES[payslip.month - 1]} {payslip.year}
               </p>
@@ -133,7 +149,7 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
           </div>
 
           {/* Employee & Period Details */}
-          <div className="grid grid-cols-2 gap-4 text-sm bg-muted/30 p-4 rounded-lg">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm bg-muted/30 p-4 rounded-lg">
             <div>
               <p className="text-xs text-muted-foreground">Employee Name</p>
               <p className="font-semibold text-foreground">{payslip.employee.user.name}</p>
@@ -149,6 +165,14 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
             <div>
               <p className="text-xs text-muted-foreground">Company</p>
               <p className="font-medium text-foreground">{company?.name || '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Days Paid</p>
+              <p className="font-medium text-foreground">{daysPaid} Days</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Loss of Pay (LOP)</p>
+              <p className="font-medium text-foreground">{lopDays} Days</p>
             </div>
           </div>
 
@@ -194,7 +218,7 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
                   Paid on: {fmtDate(payslip.paidAt || payslip.createdAt)}
                 </p>
               )}
-              <p>Generated by: {payslip.generatedBy?.name || 'System'}</p>
+              <p>Generated by: {(payslip as any).generatedBy?.name || 'System'}</p>
             </div>
             <div className="sm:text-right">
               <p>Record ID: {payslip.id}</p>
@@ -206,4 +230,3 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
     </div>
   )
 }
-

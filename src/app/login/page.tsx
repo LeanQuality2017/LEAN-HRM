@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react'
 import { signIn, getSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -64,7 +65,12 @@ function LoginForm() {
               <Input id="email" type="email" placeholder="you@unihr.com" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="username" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link href="/forgot-password" className="text-xs text-teal-700 hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
               <Input id="password" type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
             </div>
             <Button type="submit" className="w-full bg-teal-700 hover:bg-teal-800" disabled={loading}>

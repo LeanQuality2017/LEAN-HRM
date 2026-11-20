@@ -54,6 +54,36 @@ npm run dev                   # http://localhost:3001
 - Verify changes by actually hitting the routes/pages as the relevant roles before reporting done.
 - Report format always: WHAT CHANGED / FILES TOUCHED / HOW VERIFIED / ISSUES.
 
+## Project Guardrails (MANDATORY — read before every task)
+
+### Reference
+- `docs/AUDIT-REPORT.md` is the authoritative gap list. Work through it in the stated phase order.
+- `hrms-audit-validation/*.md` is historical evidence — never modify or delete these files.
+
+### Non-negotiable rules
+1. NEVER run `npm run db:push` or `prisma db push` or `--accept-data-loss`. Schema changes only via a new file in `prisma/migrations/` (use `prisma migrate dev --name <change>` in dev).
+2. NEVER run `prisma/seed.ts` against any database other than a disposable local dev DB.
+3. NEVER weaken type safety: no `any`, no `@ts-ignore`, no `@ts-expect-error`, no `eslint-disable`. Do not change `tsconfig.json` strictness.
+4. NEVER bypass or delete the tenant scoping helpers (`getScopedCompanyIds`, `getAdministeredCompanyIds`, `getEmployedCompanyIds`, `assertCompanyInScope`). Every new Prisma query on tenant data MUST be scoped by them.
+5. NEVER remove `requireAuth()` from an API route or `checkPageAccess()` from a page. New routes must call `requireAuth(roles)` and wrap in `handle()`.
+6. NEVER use `Number`/`parseFloat` for money. All monetary fields use Prisma `Decimal` and `Prisma.Decimal` arithmetic. No floating point for payroll.
+7. NEVER hardcode credentials, API keys, demo passwords, or person names in `src/`.
+8. NEVER change `src/lib/feature-gates.ts` to force payroll/institute ON in production. The gate opens only after the real payroll engine + tests exist (Phase 1 complete).
+9. Do not rewrite whole files when an edit will do. Preserve existing code style, naming, comments and the `handle()` / `ApiError` / `validateBody()` patterns.
+10. After EVERY change run, and report the output:
+    ```
+    npx tsc --noEmit
+    npx eslint .
+    npx next build
+    npx prisma validate
+    ```
+    The task is NOT done until all four pass with zero errors.
+11. One concern per commit. Commit message format: `fix(p1): <what> — <why>`.
+12. If a task would require a destructive DB migration (dropping/renaming a column, new NOT NULL without default) on existing data — STOP and ask first. Propose a safe 2-step migration instead.
+13. If a task is ambiguous, ask ONE clarifying question instead of guessing. Do not invent business rules (working days, leave accrual, OT multiplier) — ask.
+14. Keep the existing API response shape (`{ ok, data, page, pageSize, total }`) and error shape (`{ error }`). Do not break the frontend contracts.
+15. Stay in scope. Only touch files required for the current task. Don't refactor unrelated working code.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

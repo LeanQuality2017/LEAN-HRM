@@ -22,6 +22,7 @@ model Company {
   address   String?
   phone     String?
   email     String?
+  timezone  String   @default("Asia/Kolkata")
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -34,6 +35,9 @@ model Company {
   attendance    Attendance[]
   announcements Announcement[]
   userScopes    UserCompanyScope[]
+  payRule       CompanyPayRule?
+  payrollRuns   PayrollRun[]
+  attendanceSummaries AttendanceSummary[]
 }
 
 model Department {
@@ -70,6 +74,10 @@ model User {
   feesReceived       FeePayment[]        @relation("FeeReceiver")
   companyScopes      UserCompanyScope[]
   auditLogs          AuditLog[]
+  passwordResetTokens PasswordResetToken[]
+  salaryRevisionsGiven EmployeeSalaryRevision[] @relation("SalaryReviser")
+  payrollRunsRun     PayrollRun[]              @relation("PayrollRunner")
+  documentsUploaded  Document[]                @relation("DocumentUploader")
 }
 
 model Employee {
@@ -95,6 +103,11 @@ model Employee {
   workReports     DailyWorkReport[]
   reviews         PerformanceReview[] @relation("Reviewee")
   kpis            KPI[]
+  salaryStructures    SalaryStructure[]
+  salaryRevisions     EmployeeSalaryRevision[]
+  statutoryProfile    StatutoryProfile?
+  payrollLines        PayrollLine[]
+  attendanceSummaries AttendanceSummary[]
 }
 
 // Shared employees: one person can work for multiple companies; single login
@@ -183,8 +196,16 @@ model LeaveRequest {
   @@index([leaveTypeId])
 }
 
-// ============ PAYROLL ============
+// ============ PAYROLL (LEGACY V1 & ENGINE V2) ============
 
+// Legacy Payroll model kept reading-compatible for existing routes and historical queries.
+// Architectural mapping from Legacy v1 -> Engine v2:
+// - Company batch approval / locked state: Payroll -> PayrollRun
+// - Line-item individual payslip & calculations: Payroll -> PayrollLine
+// - Salary definition: Employee.baseSalary -> SalaryStructure & SalaryComponent
+// - Salary change history: Employee.baseSalary overwrite -> EmployeeSalaryRevision
+// - Tax/statutory profile: hardcoded formula -> StatutoryProfile
+// - Attendance/loss-of-pay inputs: raw dates -> AttendanceSummary
 model Payroll {
   id            String    @id @default(cuid())
   employeeId    String
@@ -203,6 +224,146 @@ model Payroll {
   generatedBy User?    @relation("PayrollGenerator", fields: [generatedById], references: [id])
 
   @@unique([employeeId, month, year])
+}
+
+model CompanyPayRule {
+  id               String   @id @default(cuid())
+  companyId        String   @unique
+  workingDaysBasis String   @default("CALENDAR") // CALENDAR | FIXED_26 | FIXED_30
+  lopDivisor       Decimal? @db.Decimal(5, 2)    // null = use workingDaysBasis
+  otMultiplier     Decimal  @default(1.50) @db.Decimal(4, 2)
+  payrollCutoffDay Int      @default(25)
+  currency         String   @default("INR")
+  timezone         String   @default("Asia/Kolkata")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model SalaryStructure {
+  id            String    @id @default(cuid())
+  employeeId    String
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime? // null = currently active structure
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  employee   Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  components SalaryComponent[]
+
+  @@index([employeeId, effectiveFrom])
+}
+
+model SalaryComponent {
+  id          String   @id @default(cuid())
+  structureId String
+  name        String   // BASIC | HRA | SPECIAL_ALLOWANCE | CONVEYANCE | etc.
+  type        String   // EARNING | DEDUCTION
+  amount      Decimal  @db.Decimal(12, 2)
+  isTaxable   Boolean  @default(true)
+  isStatutory Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  structure SalaryStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+
+  @@index([structureId])
+}
+
+model EmployeeSalaryRevision {
+  id           String   @id @default(cuid())
+  employeeId   String
+  previousBase Decimal  @db.Decimal(12, 2)
+  newBase      Decimal  @db.Decimal(12, 2)
+  effectiveFrom DateTime
+  reason       String?
+  revisedById  String?
+  createdAt    DateTime @default(now())
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  revisedBy User?    @relation("SalaryReviser", fields: [revisedById], references: [id])
+
+  @@index([employeeId, effectiveFrom])
+}
+
+model StatutoryProfile {
+  id            String   @id @default(cuid())
+  employeeId    String   @unique
+  pfApplicable  Boolean  @default(true)
+  pfCeiling     Boolean  @default(true) // Capped at statutory wage ceiling (e.g. ₹15,000)
+  esiApplicable Boolean  @default(false)
+  ptState       String   @default("TN") // State tax code (e.g. TN | KA | MH)
+  tdsRegime     String   @default("NEW") // NEW | OLD
+  declarations  String?  // JSON serialized regime declarations
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model PayrollRun {
+  id              String    @id @default(cuid())
+  companyId       String
+  month           Int
+  year            Int
+  status          String    @default("DRAFT") // DRAFT | LOCKED | PROCESSED | PAID
+  runById         String?
+  lockedAt        DateTime?
+  processedAt     DateTime?
+  paidAt          DateTime?
+  totalGross      Decimal   @default(0) @db.Decimal(14, 2)
+  totalDeductions Decimal   @default(0) @db.Decimal(14, 2)
+  totalStatutory  Decimal   @default(0) @db.Decimal(14, 2)
+  totalNet        Decimal   @default(0) @db.Decimal(14, 2)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  runBy   User?         @relation("PayrollRunner", fields: [runById], references: [id])
+  lines   PayrollLine[]
+
+  @@unique([companyId, month, year])
+  @@index([companyId, status])
+}
+
+model PayrollLine {
+  id                 String   @id @default(cuid())
+  runId              String
+  employeeId         String
+  gross              Decimal  @db.Decimal(12, 2)
+  deductions         Decimal  @db.Decimal(12, 2)
+  statutory          Decimal  @db.Decimal(12, 2)
+  net                Decimal  @db.Decimal(12, 2)
+  daysPaid           Decimal  @default(0) @db.Decimal(5, 2)
+  lopDays            Decimal  @default(0) @db.Decimal(5, 2)
+  componentBreakdown String?  // JSON snapshot of component calculations
+  createdAt          DateTime @default(now())
+
+  run      PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employee Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, employeeId])
+  @@index([runId])
+  @@index([employeeId])
+}
+
+model AttendanceSummary {
+  id          String   @id @default(cuid())
+  employeeId  String
+  companyId   String
+  month       Int
+  year        Int
+  presentDays Decimal  @default(0) @db.Decimal(5, 2)
+  lopDays     Decimal  @default(0) @db.Decimal(5, 2)
+  otHours     Decimal  @default(0) @db.Decimal(6, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, companyId, month, year])
+  @@index([companyId, month, year])
 }
 
 // ============ WORK MONITORING (Daily EOD Reports) ============
@@ -458,15 +619,70 @@ model Notification {
 
 model AuditLog {
   id        String   @id @default(cuid())
-  userId    String
+  userId    String?
   action    String
   entity    String
   entityId  String?
   meta      String?
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([createdAt])
+  @@index([entity, entityId])
 }
+
+// ============ AUTH & NOTIFICATIONS ============
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model EmailLog {
+  id        String   @id @default(cuid())
+  to        String
+  subject   String
+  template  String?
+  status    String   // SENT | FAILED | NOOP_DEV
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([to])
+  @@index([createdAt])
+}
+
+// ============ DOCUMENT STORAGE ============
+
+model Document {
+  id          String    @id @default(cuid())
+  ownerType   String    // COMPANY | EMPLOYEE | AUDIT | STUDENT
+  ownerId     String    // Foreign key identifier to owner record
+  type        String    // CONTRACT | POLICY | ID_PROOF | RESUME | PAYSLIP | AUDIT_REPORT | OTHER
+  expiryDate  DateTime?
+  fileKey     String    @unique // S3 / Object Storage object key
+  fileName    String?   // Original uploaded file name
+  mime        String    // Validated MIME type
+  size        Int       // File size in bytes
+  uploadedBy  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  uploader User? @relation("DocumentUploader", fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  @@index([ownerType, ownerId])
+  @@index([expiryDate])
+  @@index([fileKey])
+  @@index([uploadedBy])
+}
+

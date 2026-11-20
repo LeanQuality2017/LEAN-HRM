@@ -3,6 +3,7 @@ import { requireAuth, handle, ApiError, getScopedCompanyIds } from '@/lib/api-au
 import { MANAGEMENT_ROLES, LEAVE_STATUS, ATTENDANCE_STATUS, AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { validateBody, leavePatchSchema } from '@/lib/validation'
+import { sendLeaveStatusEmail } from '@/lib/mail'
 
 // PATCH /api/leaves/:id - approve/reject (MANAGER of own reports, HR+)
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -15,7 +16,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const leave = await db.leaveRequest.findUnique({
       where: { id },
-      include: { employee: { include: { assignments: true } } },
+      include: {
+        employee: {
+          include: {
+            assignments: true,
+            user: { select: { name: true, email: true } },
+          },
+        },
+        leaveType: { select: { name: true } },
+      },
     })
     if (!leave) throw new ApiError(404, 'Leave not found')
 
@@ -82,6 +91,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       return rec
     })
+
+    // Transactional email dispatch (no-op unless EMAIL_ENABLED=true)
+    if (leave.employee.user?.email && (status === LEAVE_STATUS.APPROVED || status === LEAVE_STATUS.REJECTED)) {
+      sendLeaveStatusEmail(leave.employee.user.email, {
+        name: leave.employee.user.name || 'Employee',
+        leaveType: leave.leaveType?.name || 'Leave',
+        startDate: new Date(leave.startDate).toISOString().split('T')[0],
+        endDate: new Date(leave.endDate).toISOString().split('T')[0],
+        status,
+        reviewerComment: body.comment,
+      }).catch((err) => console.error('[EMAIL:LEAVE_STATUS_ERROR]', err))
+    }
 
     return Response.json({ ok: true, data: updated })
   })
