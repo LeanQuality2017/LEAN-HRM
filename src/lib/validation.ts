@@ -465,3 +465,67 @@ export const resetPasswordSchema = z.object({
   token: z.string().trim().min(1, 'Reset token is required'),
   newPassword: passwordSchema,
 })
+
+// 27. Shifts
+export const timeFormatRegex = /^([01]\d|2[0-3]):[0-5]\d$/
+
+export const shiftCreateSchema = z
+  .object({
+    companyId: shortString.min(1, 'companyId required'),
+    name: nameSchema,
+    startTime: z.string().regex(timeFormatRegex, 'startTime must be in HH:mm format (e.g. 09:30)'),
+    endTime: z.string().regex(timeFormatRegex, 'endTime must be in HH:mm format (e.g. 18:30)'),
+    breakMinutes: z.coerce.number().int().min(0, 'breakMinutes cannot be negative').default(60),
+    graceMinutes: z.coerce.number().int().min(0, 'graceMinutes cannot be negative').default(15),
+    isDefault: z.boolean().default(false),
+    weekoffMultiplier: z.coerce.number().min(1).max(10).optional(),
+  })
+  .refine((data) => data.startTime !== data.endTime, {
+    message: 'endTime cannot be equal to startTime',
+    path: ['endTime'],
+  })
+
+export const shiftUpdateSchema = z
+  .object({
+    name: nameSchema.optional(),
+    startTime: z.string().regex(timeFormatRegex, 'startTime must be in HH:mm format (e.g. 09:30)').optional(),
+    endTime: z.string().regex(timeFormatRegex, 'endTime must be in HH:mm format (e.g. 18:30)').optional(),
+    breakMinutes: z.coerce.number().int().min(0, 'breakMinutes cannot be negative').optional(),
+    graceMinutes: z.coerce.number().int().min(0, 'graceMinutes cannot be negative').optional(),
+    isDefault: z.boolean().optional(),
+    weekoffMultiplier: z.coerce.number().min(1).max(10).optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.startTime && data.endTime) {
+        return data.startTime !== data.endTime
+      }
+      return true
+    },
+    {
+      message: 'endTime cannot be equal to startTime',
+      path: ['endTime'],
+    }
+  )
+
+// 28. Holidays
+export const holidayCreateSchema = z.object({
+  companyId: shortString.min(1, 'companyId required'),
+  date: z.string().min(1, 'date required').refine((val) => !isNaN(Date.parse(val)), {
+    message: 'Valid date required (e.g. YYYY-MM-DD)',
+  }),
+  name: nameSchema,
+  isOptional: z.boolean().default(false),
+})
+
+export const holidayUpdateSchema = z.object({
+  date: z
+    .string()
+    .min(1, 'date required')
+    .refine((val) => !isNaN(Date.parse(val)), {
+      message: 'Valid date required (e.g. YYYY-MM-DD)',
+    })
+    .optional(),
+  name: nameSchema.optional(),
+  isOptional: z.boolean().optional(),
+})
