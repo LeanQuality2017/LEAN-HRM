@@ -94,7 +94,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             },
             select: { days: true },
           })
-          const otherPendingDays = otherPendingRequests.reduce((sum, r) => sum + r.days, 0)
+          const otherPendingDays = otherPendingRequests.reduce(
+            (sum, r) => sum.add(new Prisma.Decimal(r.days.toString())),
+            new Prisma.Decimal('0.00')
+          )
 
           const available = computeAvailableBalance({
             credited: leaveBalance?.credited ?? 0,
@@ -107,7 +110,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             assertCanApply({
               available,
               requestedDays: leave.days,
-              isUnpaid: false,
+              isUnpaid,
             })
           } catch (err) {
             if (err instanceof LeaveBalanceError) {

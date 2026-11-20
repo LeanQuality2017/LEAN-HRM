@@ -92,14 +92,16 @@ export async function GET(req: Request) {
     // Compute balance details per leave type
     const data = leaveTypes.map((lt) => {
       const bal = balances.find((b) => b.leaveTypeId === lt.id)
-      const pendingDays = pendingRequests
+      const pendingDec = pendingRequests
         .filter((r) => r.leaveTypeId === lt.id)
-        .reduce((sum, r) => sum + r.days, 0)
+        .reduce(
+          (sum, r) => sum.add(new Prisma.Decimal(r.days.toString())),
+          new Prisma.Decimal('0.00')
+        )
 
       const credited = bal ? bal.credited : new Prisma.Decimal('0.00')
       const carriedForward = bal ? bal.carriedForward : new Prisma.Decimal('0.00')
       const used = bal ? bal.used : new Prisma.Decimal('0.00')
-      const pendingDec = new Prisma.Decimal(pendingDays.toString())
 
       const available = lt.isUnpaid
         ? new Prisma.Decimal('0.00')

@@ -474,8 +474,8 @@ describe('Leave Balance Enforcement & Management (Spec 5.a–5.h)', () => {
     const json = await res.json()
     expect(json.ok).toBe(true)
 
-    // Balance query was never needed for unpaid type
-    expect(mockDb.leaveBalance.findUnique).toHaveBeenCalledTimes(0)
+    // Balance query is read to provide response context even for unpaid types
+    expect(mockDb.leaveBalance.findUnique).toHaveBeenCalledTimes(1)
   })
 
   it('5.g: Cross-tenant: HR of ALPHA cannot read BETA employee balance (403)', async () => {
@@ -515,5 +515,257 @@ describe('Leave Balance Enforcement & Management (Spec 5.a–5.h)', () => {
     expect(res.status).toBe(403)
     const json = await res.json()
     expect(json.error).toMatch(/only view their own/i)
+  })
+
+  it('3.a: isUnpaid = true leave type with available balance 0 -> 201 created, no 400', async () => {
+    setAuthContext({
+      userId: 'user_emp_1',
+      role: ROLES.EMPLOYEE,
+      employeeId: 'emp_1',
+    })
+
+    mockDb.leaveType.findFirst.mockResolvedValue({
+      id: 'lt_unpaid_zero',
+      name: 'Unpaid Leave (LOP)',
+      companyId: 'company_alpha',
+      isUnpaid: true,
+    })
+
+    // Zero balance record
+    mockDb.leaveBalance.findUnique.mockResolvedValue({
+      id: 'bal_zero',
+      employeeId: 'emp_1',
+      leaveTypeId: 'lt_unpaid_zero',
+      year: 2026,
+      credited: new Prisma.Decimal('0.00'),
+      carriedForward: new Prisma.Decimal('0.00'),
+      used: new Prisma.Decimal('0.00'),
+    })
+
+    mockDb.leaveRequest.findMany.mockResolvedValue([])
+    mockDb.leaveRequest.findFirst.mockResolvedValue(null) // no overlap
+    mockDb.leaveRequest.create.mockResolvedValue({
+      id: 'req_unpaid_zero',
+      employeeId: 'emp_1',
+      leaveTypeId: 'lt_unpaid_zero',
+      startDate: new Date(todayStr),
+      endDate: new Date(tomorrowStr),
+      days: 2,
+      status: LEAVE_STATUS.PENDING,
+    })
+
+    const req = new Request('http://localhost:3000/api/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveTypeId: 'lt_unpaid_zero',
+        startDate: todayStr,
+        endDate: tomorrowStr,
+        reason: 'Unpaid leave test',
+      }),
+    })
+
+    const res = await applyLeave(req)
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(json.data.id).toBe('req_unpaid_zero')
+  })
+
+  it('3.b: isUnpaid = true with available 0 -> leave request row exists with status PENDING', async () => {
+    setAuthContext({
+      userId: 'user_emp_1',
+      role: ROLES.EMPLOYEE,
+      employeeId: 'emp_1',
+    })
+
+    mockDb.leaveType.findFirst.mockResolvedValue({
+      id: 'lt_unpaid_zero',
+      name: 'Unpaid Leave (LOP)',
+      companyId: 'company_alpha',
+      isUnpaid: true,
+    })
+
+    mockDb.leaveBalance.findUnique.mockResolvedValue(null) // no balance record at all -> available 0
+    mockDb.leaveRequest.findMany.mockResolvedValue([])
+    mockDb.leaveRequest.findFirst.mockResolvedValue(null) // no overlap
+
+    let createdRecord: any = null
+    mockDb.leaveRequest.create.mockImplementation(({ data }: any) => {
+      createdRecord = { id: 'req_unpaid_created', status: LEAVE_STATUS.PENDING, ...data }
+      return Promise.resolve(createdRecord)
+    })
+
+    const req = new Request('http://localhost:3000/api/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveTypeId: 'lt_unpaid_zero',
+        startDate: todayStr,
+        endDate: tomorrowStr,
+        reason: 'Emergency LOP',
+      }),
+    })
+
+    const res = await applyLeave(req)
+    expect(res.status).toBe(201)
+    expect(mockDb.leaveRequest.create).toHaveBeenCalledTimes(1)
+    expect(createdRecord).not.toBeNull()
+    expect(createdRecord.status).toBe(LEAVE_STATUS.PENDING)
+    expect(createdRecord.employeeId).toBe('emp_1')
+    expect(createdRecord.leaveTypeId).toBe('lt_unpaid_zero')
+  })
+
+  it('3.c: paid leave type with available 0 -> still 400 (guard not loosened)', async () => {
+    setAuthContext({
+      userId: 'user_emp_1',
+      role: ROLES.EMPLOYEE,
+      employeeId: 'emp_1',
+    })
+
+    mockDb.leaveType.findFirst.mockResolvedValue({
+      id: 'lt_paid_exhausted',
+      name: 'Paid Annual Leave',
+      companyId: 'company_alpha',
+      isUnpaid: false,
+    })
+
+    mockDb.leaveBalance.findUnique.mockResolvedValue({
+      id: 'bal_exhausted',
+      employeeId: 'emp_1',
+      leaveTypeId: 'lt_paid_exhausted',
+      year: 2026,
+      credited: new Prisma.Decimal('10.00'),
+      carriedForward: new Prisma.Decimal('0.00'),
+      used: new Prisma.Decimal('10.00'), // 0 available
+    })
+
+    mockDb.leaveRequest.findMany.mockResolvedValue([])
+    mockDb.leaveRequest.findFirst.mockResolvedValue(null)
+
+    const req = new Request('http://localhost:3000/api/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveTypeId: 'lt_paid_exhausted',
+        startDate: todayStr,
+        endDate: tomorrowStr,
+        reason: 'Paid leave with zero balance',
+      }),
+    })
+
+    const res = await applyLeave(req)
+    expect(res.status).toBe(400)
+    const json = await res.json()
+    expect(json.error).toMatch(/Insufficient leave balance: available 0(\.00)?, requested 2(\.00)?/)
+    expect(mockDb.leaveRequest.create).toHaveBeenCalledTimes(0)
+  })
+
+  it('3.d: invalid leaveTypeId -> 400 \'Invalid leave type\'', async () => {
+    setAuthContext({
+      userId: 'user_emp_1',
+      role: ROLES.EMPLOYEE,
+      employeeId: 'emp_1',
+    })
+
+    mockDb.leaveType.findFirst.mockResolvedValue(null)
+    mockDb.leaveType.findUnique.mockResolvedValue(null)
+
+    const req = new Request('http://localhost:3000/api/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveTypeId: 'non_existent_type_id',
+        startDate: todayStr,
+        endDate: tomorrowStr,
+        reason: 'Applying for invalid type',
+      }),
+    })
+
+    const res = await applyLeave(req)
+    expect(res.status).toBe(400)
+    const json = await res.json()
+    expect(json.error).toBe('Invalid leave type')
+    expect(mockDb.leaveRequest.create).toHaveBeenCalledTimes(0)
+  })
+
+  it('3.e: pending days accumulation: two pending requests of 0.5 and 0.5 -> available reduced by exactly 1.00, compared as Decimal (no float drift)', async () => {
+    setAuthContext({
+      userId: 'user_emp_1',
+      role: ROLES.EMPLOYEE,
+      employeeId: 'emp_1',
+    })
+
+    mockDb.leaveType.findFirst.mockResolvedValue({
+      id: 'lt_annual',
+      name: 'Annual Leave',
+      companyId: 'company_alpha',
+      isUnpaid: false,
+    })
+
+    // Credited: 2.00, Used: 0.00 -> Gross available = 2.00
+    mockDb.leaveBalance.findUnique.mockResolvedValue({
+      id: 'bal_drift_check',
+      employeeId: 'emp_1',
+      leaveTypeId: 'lt_annual',
+      year: 2026,
+      credited: new Prisma.Decimal('2.00'),
+      carriedForward: new Prisma.Decimal('0.00'),
+      used: new Prisma.Decimal('0.00'),
+    })
+
+    // Two pending half-day requests (0.5 + 0.5)
+    mockDb.leaveRequest.findMany.mockResolvedValue([
+      { days: 0.5 },
+      { days: 0.5 },
+    ])
+    mockDb.leaveRequest.findFirst.mockResolvedValue(null) // no overlap
+
+    // Case 1: Requesting 2 days (today to tomorrow = 2 days)
+    // Available is exactly 2.00 - 1.00 = 1.00. 2 > 1.00 -> 400 with exact decimal message
+    const req1 = new Request('http://localhost:3000/api/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveTypeId: 'lt_annual',
+        startDate: todayStr,
+        endDate: tomorrowStr,
+        reason: 'Check decimal subtraction',
+      }),
+    })
+
+    const res1 = await applyLeave(req1)
+    expect(res1.status).toBe(400)
+    const json1 = await res1.json()
+    expect(json1.error).toMatch(/Insufficient leave balance: available 1(\.00)?, requested 2(\.00)?/)
+
+    // Case 2: Requesting exactly 1 day (today to today = 1 day)
+    // 1.00 <= 1.00 exactly -> passes without float drift!
+    mockDb.leaveRequest.create.mockResolvedValue({
+      id: 'req_exact_1_day',
+      employeeId: 'emp_1',
+      leaveTypeId: 'lt_annual',
+      startDate: new Date(todayStr),
+      endDate: new Date(todayStr),
+      days: 1,
+      status: LEAVE_STATUS.PENDING,
+    })
+
+    const req2 = new Request('http://localhost:3000/api/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveTypeId: 'lt_annual',
+        startDate: todayStr,
+        endDate: todayStr,
+        reason: 'Exact 1 day request',
+      }),
+    })
+
+    const res2 = await applyLeave(req2)
+    expect(res2.status).toBe(201)
+    const json2 = await res2.json()
+    expect(json2.ok).toBe(true)
+    expect(mockDb.leaveRequest.create).toHaveBeenCalledTimes(1)
   })
 })

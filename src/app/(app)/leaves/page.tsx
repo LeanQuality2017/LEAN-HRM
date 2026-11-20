@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requirePageAuth } from '@/lib/page-auth'
 import { Card, CardContent } from '@/components/ui/card'
@@ -86,9 +87,12 @@ export default async function LeavesPage({ searchParams }: { searchParams?: Prom
 
   const balanceCards = leaveTypes.map((lt) => {
     const bal = balances.find((b) => b.leaveTypeId === lt.id)
-    const pendingDays = pendingRequests
+    const pendingDec = pendingRequests
       .filter((r) => r.leaveTypeId === lt.id)
-      .reduce((sum, r) => sum + r.days, 0)
+      .reduce(
+        (sum, r) => sum.add(new Prisma.Decimal(r.days.toString())),
+        new Prisma.Decimal('0.00')
+      )
 
     const credited = bal ? bal.credited.toNumber() : 0
     const carried = bal ? bal.carriedForward.toNumber() : 0
@@ -100,7 +104,7 @@ export default async function LeavesPage({ searchParams }: { searchParams?: Prom
           credited,
           carriedForward: carried,
           used,
-          pending: pendingDays,
+          pending: pendingDec,
         }).available.toNumber()
 
     return {
@@ -110,7 +114,7 @@ export default async function LeavesPage({ searchParams }: { searchParams?: Prom
       available,
       credited,
       used,
-      pending: pendingDays,
+      pending: pendingDec.toNumber(),
     }
   })
 

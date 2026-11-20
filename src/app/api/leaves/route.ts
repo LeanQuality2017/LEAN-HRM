@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
 import { HR_ROLES, LEAVE_STATUS } from '@/lib/constants'
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
         },
       })
       if (!leaveType) {
-        throw new ApiError(400, 'Invalid leaveTypeId: leave type does not exist or does not belong to employee company')
+        throw new ApiError(400, 'Invalid leave type')
       }
 
       if (HR_ROLES.includes(auth.role) && auth.role !== 'SUPER_ADMIN') {
@@ -85,48 +86,49 @@ export async function POST(req: Request) {
         assertCompanyInScope(leaveType.companyId, scopedIds)
       }
 
-      // Check balance if leave type is paid; isUnpaid types bypass balance check
-      if (!leaveType.isUnpaid) {
-        const leaveBalance = await tx.leaveBalance.findUnique({
-          where: {
-            employeeId_leaveTypeId_year: {
-              employeeId: targetEmployeeId,
-              leaveTypeId: body.leaveTypeId,
-              year,
-            },
-          },
-        })
-
-        const pendingRequests = await tx.leaveRequest.findMany({
-          where: {
+      // Read balance and pending requests (always read balance for response context; isUnpaid bypasses overdraw)
+      const leaveBalance = await tx.leaveBalance.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
             employeeId: targetEmployeeId,
             leaveTypeId: body.leaveTypeId,
-            status: LEAVE_STATUS.PENDING,
-            startDate: { gte: yearStart, lte: yearEnd },
+            year,
           },
-          select: { days: true },
+        },
+      })
+
+      const pendingRequests = await tx.leaveRequest.findMany({
+        where: {
+          employeeId: targetEmployeeId,
+          leaveTypeId: body.leaveTypeId,
+          status: LEAVE_STATUS.PENDING,
+          startDate: { gte: yearStart, lte: yearEnd },
+        },
+        select: { days: true },
+      })
+      const pendingDays = pendingRequests.reduce(
+        (sum, r) => sum.add(new Prisma.Decimal(r.days.toString())),
+        new Prisma.Decimal('0.00')
+      )
+
+      const available = computeAvailableBalance({
+        credited: leaveBalance?.credited ?? 0,
+        carriedForward: leaveBalance?.carriedForward ?? 0,
+        used: leaveBalance?.used ?? 0,
+        pending: pendingDays,
+      }).available
+
+      try {
+        assertCanApply({
+          available,
+          requestedDays: days,
+          isUnpaid: leaveType.isUnpaid === true,
         })
-        const pendingDays = pendingRequests.reduce((sum, r) => sum + r.days, 0)
-
-        const available = computeAvailableBalance({
-          credited: leaveBalance?.credited ?? 0,
-          carriedForward: leaveBalance?.carriedForward ?? 0,
-          used: leaveBalance?.used ?? 0,
-          pending: pendingDays,
-        }).available
-
-        try {
-          assertCanApply({
-            available,
-            requestedDays: days,
-            isUnpaid: false,
-          })
-        } catch (err) {
-          if (err instanceof LeaveBalanceError) {
-            throw new ApiError(400, err.message)
-          }
-          throw err
+      } catch (err) {
+        if (err instanceof LeaveBalanceError) {
+          throw new ApiError(400, err.message)
         }
+        throw err
       }
 
       // Overlap check: reject 409 when request overlaps existing PENDING or APPROVED leave
