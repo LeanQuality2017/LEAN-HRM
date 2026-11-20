@@ -169,7 +169,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         data: { status, reviewComment: body.comment ?? null, reviewedById: auth.userId, reviewedAt: new Date() },
       })
 
-      // On approval, mark attendance as LEAVE for the date range (best-effort)
+      // On approval, mark attendance as LEAVE for the date range
       if (status === LEAVE_STATUS.APPROVED) {
         // Resolve company assignment: use leave type's company if employee assigned to it, else primary/earliest
         let attendanceCompanyId: string
@@ -179,16 +179,30 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             leave.leaveType?.companyId,
             tx
           )
-        } catch {
-          attendanceCompanyId = ''
+        } catch (err) {
+          console.error(
+            `[attendance-scope] Failed to resolve company for leave approval: leaveId=${id}, employeeId=${leave.employeeId}`,
+            err
+          )
+          if (err instanceof ApiError) throw err
+          throw new ApiError(400, err instanceof Error ? err.message : 'No company assignment found')
         }
 
-        if (attendanceCompanyId) {
-          const start = new Date(leave.startDate), end = new Date(leave.endDate)
-          for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-            const day = new Date(d)
-            day.setHours(0, 0, 0, 0)
-            const existing = await tx.attendance.findUnique({
+        const start = new Date(leave.startDate), end = new Date(leave.endDate)
+        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
+          const day = new Date(d)
+          day.setHours(0, 0, 0, 0)
+          const existing = await tx.attendance.findUnique({
+            where: {
+              employeeId_companyId_date: {
+                employeeId: leave.employeeId,
+                companyId: attendanceCompanyId,
+                date: day,
+              },
+            },
+          })
+          if (existing) {
+            await tx.attendance.update({
               where: {
                 employeeId_companyId_date: {
                   employeeId: leave.employeeId,
@@ -196,30 +210,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
                   date: day,
                 },
               },
+              data: { status: ATTENDANCE_STATUS.LEAVE, note: 'Approved leave' },
             })
-            if (existing) {
-              await tx.attendance.update({
-                where: {
-                  employeeId_companyId_date: {
-                    employeeId: leave.employeeId,
-                    companyId: attendanceCompanyId,
-                    date: day,
-                  },
-                },
-                data: { status: ATTENDANCE_STATUS.LEAVE, note: 'Approved leave' },
-              })
-            } else {
-              await tx.attendance.create({
-                data: {
-                  employeeId: leave.employeeId,
-                  companyId: attendanceCompanyId,
-                  date: day,
-                  status: ATTENDANCE_STATUS.LEAVE,
-                  source: 'MANUAL',
-                  note: 'Approved leave',
-                },
-              })
-            }
+          } else {
+            await tx.attendance.create({
+              data: {
+                employeeId: leave.employeeId,
+                companyId: attendanceCompanyId,
+                date: day,
+                status: ATTENDANCE_STATUS.LEAVE,
+                source: 'MANUAL',
+                note: 'Approved leave',
+              },
+            })
           }
         }
         await tx.notification.create({

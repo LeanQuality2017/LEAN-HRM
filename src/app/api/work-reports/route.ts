@@ -19,7 +19,8 @@ export async function POST(req: Request) {
     let companyId: string
     try {
       companyId = await resolveAttendanceCompanyId(auth.employeeId)
-    } catch {
+    } catch (err) {
+      console.error('[attendance-scope]', err)
       throw new ApiError(400, 'No company assignment found')
     }
 

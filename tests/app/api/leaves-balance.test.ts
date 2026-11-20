@@ -768,4 +768,57 @@ describe('Leave Balance Enforcement & Management (Spec 5.a–5.h)', () => {
     expect(json2.ok).toBe(true)
     expect(mockDb.leaveRequest.create).toHaveBeenCalledTimes(1)
   })
+
+  it('5.i: Leave approval where employee has zero company assignments -> route returns 4xx and NO attendance row is created', async () => {
+    setAuthContext({
+      userId: 'user_admin_1',
+      role: ROLES.SUPER_ADMIN,
+      employeeId: 'admin_1',
+    })
+
+    mockDb.leaveRequest.findUnique.mockResolvedValue({
+      id: 'req_zero_assignments',
+      employeeId: 'emp_no_assignments',
+      leaveTypeId: 'lt_annual',
+      startDate: new Date(todayStr),
+      endDate: new Date(tomorrowStr),
+      days: 2,
+      status: LEAVE_STATUS.PENDING,
+      employee: {
+        userId: 'user_emp_no_assignments',
+        managerId: 'mgr_1',
+        assignments: [],
+        user: { name: 'Emp No Assignment', email: 'no_assign@alpha.com' },
+      },
+      leaveType: { name: 'Annual Leave', isUnpaid: false, companyId: null },
+    })
+
+    const initialBalance = {
+      id: 'bal_zero_assign',
+      employeeId: 'emp_no_assignments',
+      leaveTypeId: 'lt_annual',
+      year: 2026,
+      credited: new Prisma.Decimal('10.00'),
+      carriedForward: new Prisma.Decimal('0.00'),
+      used: new Prisma.Decimal('0.00'),
+    }
+    mockDb.leaveBalance.findUnique.mockResolvedValue(initialBalance)
+    mockDb.leaveRequest.findMany.mockResolvedValue([])
+    // Employee has zero company assignments:
+    mockDb.employeeCompanyAssignment.findMany.mockResolvedValue([])
+
+    const approveReq = new Request('http://localhost:3000/api/leaves/req_zero_assignments', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: LEAVE_STATUS.APPROVED }),
+    })
+
+    const res = await updateLeave(approveReq, { params: Promise.resolve({ id: 'req_zero_assignments' }) })
+    expect(res.status).toBeGreaterThanOrEqual(400)
+    expect(res.status).toBeLessThan(500)
+
+    // Ensure NO attendance rows were created or updated
+    expect(mockDb.attendance.create).not.toHaveBeenCalled()
+    expect(mockDb.attendance.update).not.toHaveBeenCalled()
+  })
 })

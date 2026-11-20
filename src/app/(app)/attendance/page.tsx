@@ -99,7 +99,8 @@ export default async function AttendancePage({ searchParams }: { searchParams: P
           return await db.attendance.findUnique({
             where: { employeeId_companyId_date: { employeeId, companyId, date: today } },
           })
-        } catch {
+        } catch (err) {
+          console.error('[attendance-scope]', err)
           return null
         }
       })()
