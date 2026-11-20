@@ -129,9 +129,11 @@ export function fmtTime(d: string | Date | null | undefined): string {
   return new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
-export function fmtMoney(n: number | null | undefined): string {
-  if (n == null) return '-'
-  return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+export function fmtMoney(n: number | string | null | undefined): string {
+  if (n == null || n === '') return '—'
+  const num = typeof n === 'number' ? n : Number(n)
+  if (isNaN(num)) return '—'
+  return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 export function todayISO(): string {

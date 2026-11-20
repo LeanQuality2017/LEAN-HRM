@@ -98,3 +98,68 @@ export function formatCurrency(val: Prisma.Decimal): string {
   return round(val).toFixed(2)
 }
 
+/**
+ * Canonical monetary serializer for API boundaries.
+ * This is the ONLY allowed way for money to leave the API.
+ * Ensures consistent fixed-2-decimal string formatting ("0.00") without float precision leaks.
+ * Never returns a Number. Never returns NaN or Infinity.
+ */
+export function serializeMoney(value: Prisma.Decimal | string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') {
+    return '0.00'
+  }
+  try {
+    const d = value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value.toString())
+    if (d.isNaN() || !d.isFinite()) {
+      return '0.00'
+    }
+    return d.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2)
+  } catch {
+    return '0.00'
+  }
+}
+
+/**
+ * Derives basic and allowances from the real PayrollLine.componentBreakdown JSON snapshot.
+ * Never fabricates numbers. If breakdown is missing or unparseable, returns null for both.
+ */
+export function parseEarningsBreakdown(componentBreakdown: string | null | undefined): {
+  basic: string | null
+  allowances: string | null
+} {
+  if (!componentBreakdown || typeof componentBreakdown !== 'string' || componentBreakdown.trim() === '') {
+    return { basic: null, allowances: null }
+  }
+  try {
+    const parsed = JSON.parse(componentBreakdown)
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.earnings)) {
+      return { basic: null, allowances: null }
+    }
+    let basicDec: Prisma.Decimal | null = null
+    let allowancesDec = new Prisma.Decimal('0.00')
+    let hasAllowances = false
+
+    for (const comp of parsed.earnings) {
+      if (!comp || typeof comp !== 'object') continue
+      const name = String(comp.name || '').toUpperCase()
+      const type = String(comp.type || '').toUpperCase()
+      const amt = comp.amount != null ? new Prisma.Decimal(comp.amount.toString()) : new Prisma.Decimal('0.00')
+
+      if (name === 'BASIC' || type === 'BASIC') {
+        basicDec = amt
+      } else {
+        allowancesDec = allowancesDec.add(amt)
+        hasAllowances = true
+      }
+    }
+
+    return {
+      basic: basicDec !== null ? serializeMoney(basicDec) : null,
+      allowances: (basicDec !== null || hasAllowances) ? serializeMoney(allowancesDec) : null,
+    }
+  } catch {
+    return { basic: null, allowances: null }
+  }
+}
+
+
