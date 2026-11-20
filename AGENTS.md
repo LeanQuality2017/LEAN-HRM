@@ -83,6 +83,24 @@ npm run dev                   # http://localhost:3001
 13. If a task is ambiguous, ask ONE clarifying question instead of guessing. Do not invent business rules (working days, leave accrual, OT multiplier) — ask.
 14. Keep the existing API response shape (`{ ok, data, page, pageSize, total }`) and error shape (`{ error }`). Do not break the frontend contracts.
 15. Stay in scope. Only touch files required for the current task. Don't refactor unrelated working code.
+16. Money never leaves the API as a Number. Use serializeMoney() from src/lib/payroll/money.ts.
+17. Never fabricate derived money (e.g. basic = gross * 0.5). Use the componentBreakdown snapshot or return null.
+18. Leave days are Decimal(6,2). Never use float arithmetic on days or balances.
+19. Any new balance/accrual logic must be a pure function in src/lib/leave/ with unit tests and no DB import. DB orchestration lives in a separate *-runner.ts.
+20. Leave balance checks must run inside the same transaction as the write they guard.
+21. Do not delete, rename or re-type an existing column in a migration without an explicit 3-step plan (add -> backfill -> drop) approved by me.
+
+## Verification discipline
+
+22. "Tests pass" is not evidence. Evidence is: (a) the unit is reachable from a real request path,
+    (b) a grep shows the caller, (c) an integration test goes through the public entry point.
+23. Never claim a feature complete based on unit tests of an unimported module.
+24. Every summary must state the commit hash AND confirm it was pushed. Unpushed work does not exist.
+25. Grep proofs must be case-correct and exclude the new names they are meant to distinguish from
+    (a previous "grep proof" used lowercase `tds(` and matched nothing, proving nothing).
+26. Delete one-off patch scripts before committing (patch-*.js, fix-*.js appeared in three rounds).
+27. Report assumptions explicitly. Any business rule (OT multiplier, working days, accrual start)
+    must be listed and marked PENDING until the client's CA confirms it.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
