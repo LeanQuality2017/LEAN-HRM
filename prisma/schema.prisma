@@ -38,6 +38,9 @@ model Company {
   payRule       CompanyPayRule?
   payrollRuns   PayrollRun[]
   attendanceSummaries AttendanceSummary[]
+  shifts        Shift[]
+  holidays      Holiday[]
+  regularisations AttendanceRegularisation[]
 }
 
 model Department {
@@ -78,6 +81,7 @@ model User {
   salaryRevisionsGiven EmployeeSalaryRevision[] @relation("SalaryReviser")
   payrollRunsRun     PayrollRun[]              @relation("PayrollRunner")
   documentsUploaded  Document[]                @relation("DocumentUploader")
+  regularisationsReviewed AttendanceRegularisation[] @relation("RegReviewer")
 }
 
 model Employee {
@@ -109,6 +113,8 @@ model Employee {
   statutoryProfile    StatutoryProfile?
   payrollLines        PayrollLine[]
   attendanceSummaries AttendanceSummary[]
+  shiftAssignments    EmployeeShiftAssignment[]
+  regularisations     AttendanceRegularisation[]
 }
 
 // Shared employees: one person can work for multiple companies; single login
@@ -141,6 +147,8 @@ model UserCompanyScope {
 
 // ============ ATTENDANCE & LEAVE ============
 
+// Overnight shifts: an attendance row belongs to the SHIFT DATE = the date of check-in, in the company's local timezone.
+// A shift starting 22:00 on 10 Jun and ending 06:00 on 11 Jun is ONE row dated 2026-06-10.
 model Attendance {
   id         String    @id @default(cuid())
   employeeId String
@@ -157,6 +165,7 @@ model Attendance {
   company  Company  @relation(fields: [companyId], references: [id])
 
   @@unique([employeeId, date])
+  @@unique([employeeId, companyId, date], name: "employeeId_companyId_date")
   @@index([companyId])
   @@index([date])
   @@index([companyId, date])
@@ -276,6 +285,7 @@ model CompanyPayRule {
   payrollCutoffDay Int      @default(25)
   currency         String   @default("INR")
   timezone         String   @default("Asia/Kolkata")
+  regularisationWindowDays Int @default(7)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -726,5 +736,77 @@ model Document {
   @@index([expiryDate])
   @@index([fileKey])
   @@index([uploadedBy])
+}
+
+// ============ SHIFTS, HOLIDAYS & ATTENDANCE REGULARISATION ============
+
+model Shift {
+  id            String   @id @default(cuid())
+  companyId     String
+  name          String
+  startTime     String   // "HH:mm" in company local time, e.g. "09:30"
+  endTime       String   // "HH:mm"; if endTime <= startTime the shift is overnight
+  breakMinutes  Int      @default(60)
+  graceMinutes  Int      @default(15)
+  isDefault     Boolean  @default(false)
+  weekoffMultiplier Decimal @default(2.00) @db.Decimal(4,2)
+  createdAt     DateTime @default(now())
+
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignments   EmployeeShiftAssignment[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model EmployeeShiftAssignment {
+  id         String   @id @default(cuid())
+  employeeId String
+  shiftId    String
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift      Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, effectiveFrom])
+  @@index([shiftId])
+}
+
+model Holiday {
+  id        String   @id @default(cuid())
+  companyId String
+  date      DateTime // normalised DATE in company local time
+  name      String
+  isOptional Boolean @default(false)
+
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, date])
+  @@index([companyId, date])
+}
+
+model AttendanceRegularisation {
+  id             String   @id @default(cuid())
+  employeeId     String
+  companyId      String
+  attendanceId   String?
+  date           DateTime
+  requestedStatus String  // PRESENT | HALF_DAY | WFH | ABSENT
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
+  reason         String
+  status         String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewedById   String?
+  reviewComment  String?
+  reviewedAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  reviewer   User?    @relation("RegReviewer", fields: [reviewedById], references: [id])
+
+  @@index([employeeId, status])
+  @@index([companyId, status])
 }
 
