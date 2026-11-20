@@ -4,7 +4,13 @@ import { requireAuth, handle, ApiError } from '@/lib/api-auth'
 import { ADMIN_ROLES, ATTENDANCE_STATUS, AUDIT_ACTIONS } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { biometricSyncSchema } from '@/lib/validation'
-import { resolveAttendanceCompanyId } from '@/lib/attendance'
+import {
+  resolveAttendanceCompanyId,
+  resolveShiftForDate,
+  classifyDay,
+  ShiftResolutionError,
+  type ResolvedShift,
+} from '@/lib/attendance'
 
 // NOTE: POST /api/attendance/sync is a machine-to-machine biometric device endpoint
 // exempt from NextAuth session authentication BY DESIGN; authenticated exclusively via x-api-key header.
@@ -22,16 +28,6 @@ function verifyApiKey(req: Request): boolean {
   return crypto.timingSafeEqual(bufA, bufB)
 }
 
-function isCheckInLate(checkInStr: string): boolean {
-  const match = checkInStr.match(/T(\d{2}):(\d{2})/)
-  if (match) {
-    const hours = parseInt(match[1], 10)
-    const mins = parseInt(match[2], 10)
-    return hours * 60 + mins >= 9 * 60 + 30
-  }
-  const d = new Date(checkInStr)
-  return d.getHours() * 60 + d.getMinutes() >= 9 * 60 + 30
-}
 
 // POST /api/attendance/sync - device biometric attendance push
 export async function POST(req: Request) {
@@ -48,8 +44,8 @@ export async function POST(req: Request) {
   }
 
   // Pre-check for batch size cap > 500
-  if (body && typeof body === 'object' && 'punches' in body && Array.isArray((body as any).punches)) {
-    if ((body as any).punches.length > 500) {
+  if (body && typeof body === 'object' && 'punches' in body && Array.isArray((body as { punches: unknown }).punches)) {
+    if ((body as { punches: unknown[] }).punches.length > 500) {
       return Response.json({ error: 'Batch size exceeds maximum limit of 500 punches' }, { status: 400 })
     }
   }
@@ -106,6 +102,43 @@ export async function POST(req: Request) {
 
       const targetDate = new Date(`${punch.date}T00:00:00.000Z`)
 
+      // Resolve applicable shift for employee on targetDate
+      let shift: ResolvedShift
+      try {
+        const resolved = await resolveShiftForDate(emp.id, targetCompanyId, targetDate, db)
+        shift = resolved.shift
+      } catch (err) {
+        if (err instanceof ShiftResolutionError) {
+          errors.push({
+            employeeCode: punch.employeeCode,
+            index: i,
+            reason: 'No shift configured for company',
+          })
+          skipped++
+          continue
+        }
+        throw err
+      }
+
+      // Query holiday for target company and date
+      const holiday = await db.holiday.findUnique({
+        where: {
+          companyId_date: {
+            companyId: targetCompanyId,
+            date: targetDate,
+          },
+        },
+      })
+      const isHoliday = !!holiday
+
+      // Compute isWeekoff from shift/company rule (no weekoff model exists yet -> false per spec)
+      const isWeekoff = false
+
+      // Resolve company timezone
+      const payRule = await db.companyPayRule.findUnique({ where: { companyId: targetCompanyId } })
+      const timeZone = payRule?.timezone || 'Asia/Kolkata'
+      const dateKey = punch.date
+
       // Per-item transaction for atomic merge upsert
       await db.$transaction(async (tx) => {
         const existing = await tx.attendance.findUnique({
@@ -119,11 +152,31 @@ export async function POST(req: Request) {
         })
 
         if (!existing) {
-          const status = punch.checkIn
-            ? isCheckInLate(punch.checkIn)
-              ? ATTENDANCE_STATUS.LATE
-              : ATTENDANCE_STATUS.PRESENT
-            : ATTENDANCE_STATUS.PRESENT
+          const checkInUtc = punch.checkIn ?? null
+          const checkOutUtc = punch.checkOut ?? null
+
+          const classification = classifyDay({
+            dateKey,
+            isHoliday,
+            isWeekoff,
+            punches: (checkInUtc || checkOutUtc) ? {
+              checkInUtc,
+              checkOutUtc,
+              source: 'BIOMETRIC',
+            } : null,
+            shift,
+            timeZone,
+          })
+
+          const classificationData = {
+            status: classification.status,
+            lateMinutes: classification.lateMinutes.toNumber(),
+            earlyExitMinutes: classification.earlyExitMinutes.toNumber(),
+            otMinutes: Math.round(classification.otHours.mul(60).toNumber()),
+            isLop: classification.isLop,
+            shiftId: shift.id,
+            classifiedAt: new Date(),
+          }
 
           await tx.attendance.create({
             data: {
@@ -132,8 +185,8 @@ export async function POST(req: Request) {
               date: targetDate,
               checkIn: punch.checkIn ? new Date(punch.checkIn) : null,
               checkOut: punch.checkOut ? new Date(punch.checkOut) : null,
-              status,
               source: 'BIOMETRIC',
+              ...classificationData,
             },
           })
           created++
@@ -142,10 +195,8 @@ export async function POST(req: Request) {
           const updateData: Record<string, unknown> = {}
           let fieldsChanged = false
 
-          let newCheckIn: Date | null = null
           if (!existing.checkIn && punch.checkIn) {
-            newCheckIn = new Date(punch.checkIn)
-            updateData.checkIn = newCheckIn
+            updateData.checkIn = new Date(punch.checkIn)
             fieldsChanged = true
           }
 
@@ -154,16 +205,34 @@ export async function POST(req: Request) {
             fieldsChanged = true
           }
 
-          // Keep existing status unless both punches now exist and status was default-derived
-          if (newCheckIn && punch.checkIn) {
-            const isLate = isCheckInLate(punch.checkIn)
-            if (isLate && existing.status === ATTENDANCE_STATUS.PRESENT) {
-              updateData.status = ATTENDANCE_STATUS.LATE
-              fieldsChanged = true
-            }
-          }
-
           if (fieldsChanged) {
+            const mergedCheckIn = (updateData.checkIn as Date | undefined) ?? existing.checkIn
+            const mergedCheckOut = (updateData.checkOut as Date | undefined) ?? existing.checkOut
+
+            const checkInUtc = mergedCheckIn ? mergedCheckIn.toISOString() : null
+            const checkOutUtc = mergedCheckOut ? mergedCheckOut.toISOString() : null
+
+            const classification = classifyDay({
+              dateKey,
+              isHoliday,
+              isWeekoff,
+              punches: (checkInUtc || checkOutUtc) ? {
+                checkInUtc,
+                checkOutUtc,
+                source: existing.source ?? 'BIOMETRIC',
+              } : null,
+              shift,
+              timeZone,
+            })
+
+            updateData.status = classification.status
+            updateData.lateMinutes = classification.lateMinutes.toNumber()
+            updateData.earlyExitMinutes = classification.earlyExitMinutes.toNumber()
+            updateData.otMinutes = Math.round(classification.otHours.mul(60).toNumber())
+            updateData.isLop = classification.isLop
+            updateData.shiftId = shift.id
+            updateData.classifiedAt = new Date()
+
             await tx.attendance.update({
               where: {
                 employeeId_companyId_date: {
@@ -181,11 +250,12 @@ export async function POST(req: Request) {
           }
         }
       })
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Transaction error'
       errors.push({
         employeeCode: punch.employeeCode,
         index: i,
-        reason: err?.message || 'Transaction error',
+        reason: errorMsg,
       })
       skipped++
     }
