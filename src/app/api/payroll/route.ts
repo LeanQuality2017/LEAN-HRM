@@ -20,7 +20,7 @@ import { logAudit } from '@/lib/audit'
 import { validateBody, payrollCreateSchema, payrollUpdateSchema } from '@/lib/validation'
 import { parsePaginationParams } from '@/lib/pagination'
 import { sendPayslipReadyEmail } from '@/lib/mail'
-import { computePayslip, DeclaredDeductionsInput } from '@/lib/payroll'
+import { computePayslip, DeclaredDeductionsInput, PayrollCalculationError, PayrollLineDraft } from '@/lib/payroll'
 
 /**
  * Validates strict adjacent state transitions:
@@ -283,7 +283,8 @@ export async function POST(req: Request) {
           totalStatutory: Number(existingRun.totalStatutory),
           totalNet: Number(existingRun.totalNet),
           created: 0,
-          skipped: existingRun.lines.length,
+          skipped: [], // array, never omitted
+          skippedCount: existingRun.lines.length,
           lines: existingRun.lines,
           isIdempotent: true,
           recomputeBlocked: existingRun.status !== PAYROLL_STATUS.DRAFT,
@@ -315,7 +316,7 @@ export async function POST(req: Request) {
     }
 
     // Execute Payroll Run Orchestration in ONE atomic transaction
-    const { run, linesCreated, recipients } = await db.$transaction(async (tx) => {
+    const { run, linesCreated, recipients, skipped } = await db.$transaction(async (tx) => {
       // 1. Get or create default CompanyPayRule
       let payRule = await tx.companyPayRule.findUnique({
         where: { companyId: targetCompanyId },
@@ -353,6 +354,13 @@ export async function POST(req: Request) {
       let totalNet = new Prisma.Decimal('0.00')
 
       const createdRecipients: Array<{ email: string; name: string; netPay: number }> = []
+      const skippedEmployees: Array<{
+        employeeId: string
+        employeeCode: string
+        employeeName: string
+        reason: string
+      }> = []
+      let createdLinesCount = 0
 
       // 3. Process each employee through the pure calculation engine
       for (const emp of employees) {
@@ -475,18 +483,36 @@ export async function POST(req: Request) {
           }
         }
 
-        // Compute pure payslip draft via calculation engine (zero placeholder math)
-        const draft = computePayslip({
-          runId: payrollRun.id,
-          companyId: targetCompanyId,
-          month,
-          year,
-          employee: emp,
-          payRule,
-          summary,
-          previousTdsDeducted,
-          declaredDeductions,
-        })
+        // Compute pure payslip draft via calculation engine (isolated per-employee)
+        let draft: PayrollLineDraft
+        try {
+          draft = computePayslip({
+            runId: payrollRun.id,
+            companyId: targetCompanyId,
+            month,
+            year,
+            employee: emp,
+            payRule,
+            summary,
+            previousTdsDeducted,
+            declaredDeductions,
+          })
+        } catch (err) {
+          if (err instanceof PayrollCalculationError) {
+            console.warn(`[PAYROLL_SKIP] Employee ${emp.employeeCode} skipped: ${err.message}`)
+            skippedEmployees.push({
+              employeeId: emp.id,
+              employeeCode: emp.employeeCode,
+              employeeName: emp.user?.name || 'Unknown',
+              reason: err.message,
+            })
+            continue
+          }
+          // Any other error type must abort the transaction
+          throw err
+        }
+
+        createdLinesCount++
 
         // Create PayrollLine
         await tx.payrollLine.create({
@@ -577,15 +603,17 @@ export async function POST(req: Request) {
         companyId: targetCompanyId,
         month,
         year,
-        linesCount: employees.length,
+        linesCount: createdLinesCount,
         totalGross: totalGross.toString(),
         totalNet: totalNet.toString(),
+        ...(skippedEmployees.length > 0 ? { skipped: skippedEmployees } : {}),
       })
 
       return {
         run: updatedRun,
-        linesCreated: employees.length,
+        linesCreated: createdLinesCount,
         recipients: createdRecipients,
+        skipped: skippedEmployees,
       }
     })
 
@@ -613,7 +641,7 @@ export async function POST(req: Request) {
         totalStatutory: Number(run.totalStatutory),
         totalNet: Number(run.totalNet),
         created: linesCreated,
-        skipped: 0,
+        skipped: skipped,
       },
     })
   })
@@ -640,12 +668,24 @@ export async function PATCH(req: Request) {
     const rawBody = await req.json().catch(() => ({}))
     const body = validateBody(payrollUpdateSchema, rawBody)
 
-    // Step-up verification retained: if superadmin credentials supplied, verify them
-    const stepUpEmail = (rawBody?.email as string) || (body.email as string) || req.headers.get('x-step-up-email')
-    const stepUpPassword = (rawBody?.password as string) || req.headers.get('x-step-up-password')
-    if (stepUpEmail && stepUpPassword) {
-      await verifySuperadminStepUp(auth, stepUpEmail, stepUpPassword, req)
+    // Step-up verification is MANDATORY for SUPER_ADMIN payroll mutations (BODY ONLY)
+    // Passwords must NEVER travel in headers; x-step-up-email and x-step-up-password are rejected.
+    const stepUpEmail = typeof rawBody.email === 'string' ? rawBody.email.trim() : (typeof body.email === 'string' ? body.email.trim() : '')
+    const stepUpPassword = typeof rawBody.password === 'string' ? rawBody.password : ''
+
+    if (!stepUpEmail || !stepUpPassword) {
+      await logAudit(
+        db,
+        auth.userId,
+        AUDIT_ACTIONS.STEP_UP_FAILURE,
+        'Payroll',
+        id || runId || 'unknown',
+        { reason: 'Missing step-up credentials in request body' }
+      ).catch(() => {})
+      throw new ApiError(403, 'Forbidden: step-up authentication required (email and password must be provided in request body)')
     }
+
+    await verifySuperadminStepUp(auth, stepUpEmail, stepUpPassword, req)
 
     const scopedIds = await getScopedCompanyIds(auth)
 

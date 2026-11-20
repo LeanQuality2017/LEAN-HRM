@@ -691,6 +691,50 @@ describe('Security & Multi-Tenant Isolation Negative Tests', () => {
       expect(data.error).toBe('Forbidden: insufficient permissions')
     })
 
+    it('5.d: returns 403 when SUPER_ADMIN attempts status change without step-up credentials in body', async () => {
+      setAuthContext({
+        userId: 'sa_user_id',
+        role: ROLES.SUPER_ADMIN,
+        employeeId: null,
+        name: 'Super Admin',
+      })
+
+      const req = new Request('http://localhost:3001/api/payroll?id=run_001', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: PAYROLL_STATUS.LOCKED }),
+      })
+
+      const res = await patchPayroll(req)
+      expect(res.status).toBe(403)
+      const data = await res.json()
+      expect(data.error).toContain('step-up authentication required')
+    })
+
+    it('5.e: returns 403 when SUPER_ADMIN supplies step-up credentials only in headers (headers no longer accepted)', async () => {
+      setAuthContext({
+        userId: 'sa_user_id',
+        role: ROLES.SUPER_ADMIN,
+        employeeId: null,
+        name: 'Super Admin',
+      })
+
+      const req = new Request('http://localhost:3001/api/payroll?id=run_001', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-step-up-email': 'superadmin@unihr.com',
+          'x-step-up-password': 'CorrectSuperAdminPassword123!',
+        },
+        body: JSON.stringify({ status: PAYROLL_STATUS.LOCKED }),
+      })
+
+      const res = await patchPayroll(req)
+      expect(res.status).toBe(403)
+      const data = await res.json()
+      expect(data.error).toContain('step-up authentication required')
+    })
+
     it('returns 403 when non-SUPER_ADMIN (HR) attempts PATCH /api/payroll', async () => {
       setAuthContext({
         userId: 'u_hr_staff',

@@ -381,29 +381,27 @@ describe('Section 192 TDS Comprehensive Verification (Audit Fixes)', () => {
     })
   })
 
-  // 7.d: FY resolution helper
-  describe('7.d: Indian Financial Year Resolution', () => {
-    it('resolves financial years correctly for both (year, month) and (month, year) signatures', () => {
-      expect(resolveFinancialYear(2026, 3)).toBe('FY2025_26')
-      expect(resolveFinancialYear(2026, 4)).toBe('FY2026_27')
-      expect(resolveFinancialYear(3, 2026)).toBe('FY2025_26')
-      expect(resolveFinancialYear(4, 2026)).toBe('FY2026_27')
-      expect(resolveFinancialYear(11, 2026)).toBe('FY2026_27')
-      expect(resolveFinancialYear(1, 2025)).toBe('FY2024_25')
-      expect(resolveFinancialYear(6, 2024)).toBe('FY2024_25')
+  // 7.d & 5.f: FY resolution helper with named { year, month } parameters
+  describe('7.d: Indian Financial Year Resolution ({ year, month })', () => {
+    it('resolves financial years correctly using named { year, month } parameters (5.f)', () => {
+      expect(resolveFinancialYear({ year: 2026, month: 3 })).toBe('FY2025_26')
+      expect(resolveFinancialYear({ year: 2026, month: 4 })).toBe('FY2026_27')
+      expect(resolveFinancialYear({ year: 2026, month: 11 })).toBe('FY2026_27')
+      expect(resolveFinancialYear({ year: 2025, month: 1 })).toBe('FY2024_25')
+      expect(resolveFinancialYear({ year: 2024, month: 6 })).toBe('FY2024_25')
     })
   })
 
   // 7.e: Unknown FY error
   describe('7.e: Explicit Error on Unconfigured Financial Year', () => {
     it('throws explicit error when financial year is unconfigured (zero silent fallbacks)', () => {
-      expect(() => resolveFinancialYear(1990, 5)).toThrow(
+      expect(() => resolveFinancialYear({ year: 1990, month: 5 })).toThrow(
         'Tax configuration not found for financial year: FY1990_91'
       )
-      expect(() => resolveFinancialYear(2035, 6)).toThrow(
+      expect(() => resolveFinancialYear({ year: 2035, month: 6 })).toThrow(
         'Tax configuration not found for financial year: FY2035_36'
       )
-      expect(() => resolveFinancialYear(2026, 13)).toThrow(
+      expect(() => resolveFinancialYear({ year: 2026, month: 13 })).toThrow(
         'Invalid month: 13. Month must be between 1 and 12.'
       )
     })

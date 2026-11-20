@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from '@/hooks/use-toast'
-import { Loader2, Wallet } from 'lucide-react'
+import { Loader2, Wallet, AlertTriangle } from 'lucide-react'
+import Link from 'next/link'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -19,16 +20,35 @@ export function GeneratePayrollButton() {
   const [month, setMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth())
   const [year, setYear] = useState(now.getFullYear())
 
+  const [skippedList, setSkippedList] = useState<
+    Array<{ employeeId: string; employeeCode: string; employeeName: string; reason: string }>
+  >([])
+
   async function generate() {
     setLoading(true)
+    setSkippedList([])
     const res = await fetch('/api/payroll', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month, year }),
     })
     const json = await res.json()
     setLoading(false)
     if (!res.ok) return toast({ title: 'Error', description: json.error, variant: 'destructive' })
-    toast({ title: '✅ Payroll generated', description: `${json.data.created} payslips created, ${json.data.skipped} already existed.` })
-    setOpen(false)
+
+    const skipped = Array.isArray(json.data?.skipped) ? json.data.skipped : []
+    if (skipped.length > 0) {
+      setSkippedList(skipped)
+      toast({
+        title: '⚠️ Payroll generated with warnings',
+        description: `${json.data.created} payslips created, ${skipped.length} employees skipped.`,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: '✅ Payroll generated',
+        description: `${json.data.created} payslips created.`,
+      })
+      setOpen(false)
+    }
     router.refresh()
   }
 
@@ -55,6 +75,31 @@ export function GeneratePayrollButton() {
         <Button onClick={generate} disabled={loading} className="w-full bg-teal-700 hover:bg-teal-800">
           {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />} Generate
         </Button>
+
+        {skippedList.length > 0 && (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md text-amber-900 text-xs space-y-2">
+            <div className="font-semibold flex items-center gap-1.5 text-amber-800">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {skippedList.length} employee(s) skipped due to calculation errors:
+            </div>
+            <ul className="divide-y divide-amber-200/60 max-h-40 overflow-y-auto">
+              {skippedList.map((s) => (
+                <li key={s.employeeId} className="py-1.5 flex items-center justify-between gap-2">
+                  <div className="truncate">
+                    <span className="font-medium">{s.employeeCode}</span> ({s.employeeName}): {s.reason}
+                  </div>
+                  <Link
+                    href={`/employees/${s.employeeId}`}
+                    className="text-teal-700 underline font-medium hover:text-teal-800 shrink-0"
+                  >
+                    Fix Profile
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-amber-700">Fix their statutory profile, then re-run payroll generation.</p>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )

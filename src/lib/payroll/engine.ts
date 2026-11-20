@@ -116,12 +116,11 @@ export function computePayslip(context: RunContext): PayrollLineDraft {
   }
 
   // 5. Statutory Deductions
-  const profile = context.employee.statutoryProfile ?? {
+  const profile: StatutoryProfileInput = context.employee.statutoryProfile ?? {
     pfApplicable: true,
     pfCeiling: true,
     esiApplicable: false,
     ptState: 'TN',
-    tdsRegime: 'NEW',
   }
 
   // EPF
@@ -153,7 +152,7 @@ export function computePayslip(context: RunContext): PayrollLineDraft {
   // TDS
   let tax = ZERO
   if (profile.tdsRegime && profile.tdsRegime.trim() !== '') {
-    const fy = resolveFinancialYear(context.month, context.year)
+    const fy = resolveFinancialYear({ year: context.year, month: context.month })
     const monthInFY = context.month >= 4 ? context.month - 3 : context.month + 9
     const remainingMonthsInFY = Math.max(1, 12 - monthInFY + 1)
     const grossAnnualSalary = mul(structure.gross, new Prisma.Decimal('12.00'))

@@ -21,18 +21,17 @@ export type FinancialYear = 'FY2026_27' | 'FY2025_26' | 'FY2024_25' | 'FY2023_24
  * Supports both signatures: (month, year) or (year, month).
  * Throws an explicit error if the financial year is unconfigured (no silent fallback).
  */
-export function resolveFinancialYear(param1: number, param2: number): FinancialYear {
-  let month: number
-  let year: number
+export interface ResolveFinancialYearInput {
+  year: number
+  month: number
+}
 
-  if (param1 > 100) {
-    year = param1
-    month = param2
-  } else {
-    month = param1
-    year = param2
-  }
-
+/**
+ * Resolves Indian Financial Year (April 1 to March 31).
+ * Accepts named { year, month } arguments.
+ * Throws an explicit error if the financial year is unconfigured (no silent fallback).
+ */
+export function resolveFinancialYear({ year, month }: ResolveFinancialYearInput): FinancialYear {
   if (month < 1 || month > 12) {
     throw new Error(`Invalid month: ${month}. Month must be between 1 and 12.`)
   }

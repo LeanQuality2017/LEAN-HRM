@@ -2,7 +2,8 @@ import { cache } from 'react'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { ROLES } from '@/lib/constants'
+import { logAudit } from '@/lib/audit'
+import { ROLES, AUDIT_ACTIONS } from '@/lib/constants'
 import { verifyPassword } from '@/lib/password'
 import {
   buildRateLimitKey,
@@ -196,20 +197,33 @@ export async function verifySuperadminStepUp(
   password: string,
   req?: Request
 ): Promise<User> {
+  const ip = getClientIp(req)
+  const cleanEmail = (email || '').toLowerCase().trim()
+  const rateLimitKey = buildRateLimitKey(cleanEmail || 'unknown', ip)
+
   if (auth.role !== ROLES.SUPER_ADMIN) {
+    await logAudit(db, auth.userId, AUDIT_ACTIONS.STEP_UP_FAILURE, 'Security', auth.userId, {
+      reason: 'Role is not SUPER_ADMIN',
+      ip,
+    }).catch(() => {})
     throw new ApiError(403, 'Forbidden: superadmin credential authorization required')
   }
 
-  const cleanEmail = (email || '').toLowerCase().trim()
-  const ip = getClientIp(req)
-  const rateLimitKey = buildRateLimitKey(cleanEmail || 'unknown', ip)
-
   if (isLoginRateLimited(rateLimitKey)) {
+    await logAudit(db, auth.userId, AUDIT_ACTIONS.STEP_UP_FAILURE, 'Security', auth.userId, {
+      reason: 'Rate limited',
+      email: cleanEmail,
+      ip,
+    }).catch(() => {})
     throw new ApiError(429, 'Too many attempts, try again later')
   }
 
   if (!cleanEmail || !password) {
     recordFailedLogin(rateLimitKey)
+    await logAudit(db, auth.userId, AUDIT_ACTIONS.STEP_UP_FAILURE, 'Security', auth.userId, {
+      reason: 'Missing credentials',
+      ip,
+    }).catch(() => {})
     throw new ApiError(401, 'Invalid credentials')
   }
 
@@ -219,15 +233,29 @@ export async function verifySuperadminStepUp(
 
   if (!user || !user.isActive || user.role !== ROLES.SUPER_ADMIN || user.id !== auth.userId) {
     recordFailedLogin(rateLimitKey)
+    await logAudit(db, auth.userId, AUDIT_ACTIONS.STEP_UP_FAILURE, 'Security', auth.userId, {
+      reason: 'User mismatch or inactive',
+      email: cleanEmail,
+      ip,
+    }).catch(() => {})
     throw new ApiError(401, 'Invalid credentials')
   }
 
   const valid = verifyPassword(password, user.passwordHash)
   if (!valid) {
     recordFailedLogin(rateLimitKey)
+    await logAudit(db, auth.userId, AUDIT_ACTIONS.STEP_UP_FAILURE, 'Security', auth.userId, {
+      reason: 'Invalid password',
+      email: cleanEmail,
+      ip,
+    }).catch(() => {})
     throw new ApiError(401, 'Invalid credentials')
   }
 
   resetLoginRateLimit(rateLimitKey)
+  await logAudit(db, auth.userId, AUDIT_ACTIONS.STEP_UP_SUCCESS, 'Security', auth.userId, {
+    email: cleanEmail,
+    ip,
+  }).catch(() => {})
   return user
 }
