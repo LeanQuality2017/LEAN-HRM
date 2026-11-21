@@ -12,7 +12,7 @@ import {
   resetLoginRateLimit,
   getClientIp,
 } from '@/lib/rate-limit'
-import type { User } from '@prisma/client'
+import { Prisma, type User } from '@prisma/client'
 
 export interface AuthContext {
   userId: string
@@ -88,6 +88,21 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
       const issue = zErr.issues?.[0]
       const path = issue?.path?.length ? `${issue.path.join('.')}: ` : ''
       return Response.json({ error: `${path}${issue?.message || 'Invalid input'}` }, { status: 400 })
+    }
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError ||
+      (err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string')
+    ) {
+      const code = (err as { code: string }).code
+      if (code === 'P2002') {
+        return Response.json({ error: 'Conflict: resource already exists' }, { status: 409 })
+      }
+      if (code === 'P2025') {
+        return Response.json({ error: 'Record not found' }, { status: 404 })
+      }
+      if (code === 'P2003') {
+        return Response.json({ error: 'Invalid reference: related record does not exist' }, { status: 400 })
+      }
     }
     console.error('[API Error]', err)
     return Response.json({ error: 'Internal server error' }, { status: 500 })

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getAdministeredCompanyIds, assertInstituteInScope } from '@/lib/api-auth'
 import { isInstituteEnabled } from '@/lib/feature-gates'
@@ -13,7 +14,7 @@ export async function GET() {
       throw new ApiError(403, 'Institute module is disabled outside approved demo environments')
     }
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.StudentWhereInput = {}
 
     if (auth.role === ROLES.STUDENT) {
       where.userId = auth.userId

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds } from '@/lib/api-auth'
 import { MANAGEMENT_ROLES } from '@/lib/constants'
@@ -11,7 +12,7 @@ export async function GET(req: Request) {
     const employeeId = url.searchParams.get('employeeId')
     const scopedIds = await getScopedCompanyIds(auth)
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.KPIWhereInput = {}
     if (auth.role === 'EMPLOYEE') {
       where.employeeId = auth.employeeId || 'none'
     } else if (employeeId) {

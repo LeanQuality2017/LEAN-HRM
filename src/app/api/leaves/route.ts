@@ -174,7 +174,7 @@ export async function GET(req: Request) {
       assertCompanyInScope(companyId, scopedIds)
     }
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.LeaveRequestWhereInput = {}
     if (scope === 'mine') {
       if (!auth.employeeId) return Response.json({ ok: true, data: [], page: 1, pageSize: 25, total: 0 })
       where.employeeId = auth.employeeId
@@ -183,9 +183,9 @@ export async function GET(req: Request) {
         where.employee = { managerId: auth.employeeId }
       }
       if (companyId) {
-        where.employee = { ...(where.employee as object || {}), assignments: { some: { companyId } } }
+        where.employee = { ...(where.employee as Prisma.EmployeeWhereInput || {}), assignments: { some: { companyId } } }
       } else if (scopedIds) {
-        where.employee = { ...(where.employee as object || {}), assignments: { some: { companyId: { in: scopedIds } } } }
+        where.employee = { ...(where.employee as Prisma.EmployeeWhereInput || {}), assignments: { some: { companyId: { in: scopedIds } } } }
       }
     } else {
       return Response.json({ ok: true, data: [], page: 1, pageSize: 25, total: 0 })

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
 import { HR_ROLES, ATTENDANCE_STATUSES, ATTENDANCE_SOURCES, ATTENDANCE_STATUS } from '@/lib/constants'
@@ -172,7 +173,7 @@ export async function GET(req: Request) {
       assertCompanyInScope(companyId, scopedIds)
     }
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.AttendanceWhereInput = {}
     const isHr = HR_ROLES.includes(auth.role)
     if (isHr) {
       if (employeeId) where.employeeId = employeeId

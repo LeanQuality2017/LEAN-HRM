@@ -235,6 +235,28 @@ describe('Shifts and Holidays Configuration API (Step 4.6)', () => {
     })
   })
 
+  // 2b. POST shift with nonexistent companyId returns 400 Bad Request via P2003 mapping
+  it('POST shift with nonexistent companyId returns 400 Bad Request via P2003 mapping', async () => {
+    const { Prisma } = await import('@prisma/client')
+    mockDb.shift.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Foreign key constraint failed on the field: (`companyId`)', {
+        code: 'P2003',
+        clientVersion: '6.19.3',
+      })
+    )
+
+    const req = createJsonRequest('http://localhost:3001/api/shifts', 'POST', {
+      companyId: 'nonexistent_company_id',
+      name: 'Orphan Shift',
+      startTime: '09:00',
+      endTime: '17:00',
+    })
+    const res = await postShift(req)
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as { error: string }
+    expect(json.error).toBe('Invalid reference: related record does not exist')
+  })
+
   // 3. HR of ALPHA creates holiday for BETA -> 403
   it('HR of ALPHA creates holiday for BETA -> 403', async () => {
     // Configure auth context: HR scoped ONLY to company_alpha

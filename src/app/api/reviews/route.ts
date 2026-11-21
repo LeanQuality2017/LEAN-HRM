@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds } from '@/lib/api-auth'
 import { MANAGEMENT_ROLES, REVIEW_STATUS } from '@/lib/constants'
@@ -12,7 +13,7 @@ export async function GET(req: Request) {
     const { employeeId } = reviewsGetQuerySchema.parse({ employeeId: rawEmployeeId })
     const scopedIds = await getScopedCompanyIds(auth)
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.PerformanceReviewWhereInput = {}
 
     if (!MANAGEMENT_ROLES.includes(auth.role)) {
       if (employeeId && employeeId !== auth.employeeId) {

@@ -529,3 +529,32 @@ export const holidayUpdateSchema = z.object({
   name: nameSchema.optional(),
   isOptional: z.boolean().optional(),
 })
+
+// 29. Attendance Regularisation
+export const regularisationSubmitSchema = z
+  .object({
+    companyId: shortString.nullish(),
+    workDate: z.string().optional(),
+    date: z.string().optional(),
+    intendedCheckIn: z.string().nullish(),
+    intendedCheckOut: z.string().nullish(),
+    requestedCheckIn: z.string().nullish(),
+    requestedCheckOut: z.string().nullish(),
+    reason: z.string().trim().min(3, 'Reason must be at least 3 characters').max(1000, 'Reason cannot exceed 1000 characters'),
+    requestedStatus: z.enum(['PRESENT', 'HALF_DAY', 'WFH', 'ABSENT']).default('PRESENT'),
+  })
+  .refine((data) => !!(data.workDate || data.date), {
+    message: 'workDate is required',
+    path: ['workDate'],
+  })
+
+export const regularisationReviewSchema = z
+  .object({
+    action: z.enum(['APPROVE', 'REJECT']).optional(),
+    status: z.enum(['APPROVED', 'REJECTED']).optional(),
+    reviewComment: z.string().trim().max(1000).nullish(),
+  })
+  .refine((data) => !!(data.action || data.status), {
+    message: 'action or status (APPROVE/REJECT or APPROVED/REJECTED) is required',
+    path: ['action'],
+  })

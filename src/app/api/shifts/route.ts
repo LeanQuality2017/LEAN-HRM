@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
 import { HR_ROLES, STAFF_ROLES, AUDIT_ACTIONS } from '@/lib/constants'
@@ -16,7 +17,7 @@ export async function GET(req: Request) {
       assertCompanyInScope(companyId, scopedIds)
     }
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.ShiftWhereInput = {}
     if (companyId) {
       where.companyId = companyId
     } else if (scopedIds !== null) {
@@ -39,11 +40,6 @@ export async function POST(req: Request) {
     const body = validateBody(shiftCreateSchema, await req.json())
     const scopedIds = await getScopedCompanyIds(auth)
     assertCompanyInScope(body.companyId, scopedIds)
-
-    const company = await db.company.findUnique({
-      where: { id: body.companyId },
-    })
-    if (!company) throw new ApiError(404, 'Company not found')
 
     const exists = await db.shift.findUnique({
       where: {

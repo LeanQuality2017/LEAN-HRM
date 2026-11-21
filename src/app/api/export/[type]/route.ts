@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds } from '@/lib/api-auth'
 import { isPayrollEnabled, isInstituteEnabled } from '@/lib/feature-gates'
@@ -60,7 +61,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
 
     if (type === 'attendance') {
       header = ['date', 'employeeCode', 'name', 'company', 'checkIn', 'checkOut', 'status', 'source']
-      const where: Record<string, unknown> = {}
+      const where: Prisma.AttendanceWhereInput = {}
       if (scopedIds) {
         where.companyId = { in: scopedIds }
       }
@@ -101,7 +102,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
         )
       }
       header = ['month', 'year', 'employeeCode', 'name', 'basic', 'allowances', 'deductions', 'netPay', 'status', 'paidAt']
-      const where: Record<string, unknown> = {}
+      const where: Prisma.PayrollWhereInput = {}
       if (scopedIds) {
         where.employee = { assignments: { some: { companyId: { in: scopedIds } } } }
       }
@@ -147,7 +148,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
         rowCount = 0
         dataLines = []
       } else {
-        const where: Record<string, unknown> = {}
+        const where: Prisma.StudentWhereInput = {}
         if (fromDate && toDate) {
           where.createdAt = { gte: fromDate, lte: toDate }
         }
@@ -206,7 +207,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ type: st
         rowCount = 0
         dataLines = []
       } else {
-        const where: Record<string, unknown> = {
+        const where: Prisma.FeePaymentWhereInput = {
           paidAt: { gte: fromDate!, lte: toDate! },
         }
 

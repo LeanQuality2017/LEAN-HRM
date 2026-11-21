@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
 import { MANAGEMENT_ROLES, REPORT_STATUS } from '@/lib/constants'
@@ -74,7 +75,7 @@ export async function GET(req: Request) {
       assertCompanyInScope(companyId, scopedIds)
     }
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.DailyWorkReportWhereInput = {}
     if (scope === 'all') {
       if (!MANAGEMENT_ROLES.includes(auth.role)) throw new ApiError(403, 'Forbidden')
       if (employeeId) where.employeeId = employeeId

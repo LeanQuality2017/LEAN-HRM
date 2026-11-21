@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, getScopedCompanyIds } from '@/lib/api-auth'
 import { HR_ROLES, ROLES } from '@/lib/constants'
@@ -11,7 +12,7 @@ export async function GET(req: Request) {
     const userId = url.searchParams.get('userId')
     const action = url.searchParams.get('action')
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.AuditLogWhereInput = {}
 
     if (auth.role === ROLES.COMPANY_ADMIN || auth.role === ROLES.HR) {
       const scopedIds = await getScopedCompanyIds(auth)

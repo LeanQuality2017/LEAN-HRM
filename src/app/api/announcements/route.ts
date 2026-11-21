@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireAuth, handle, ApiError, getScopedCompanyIds, assertCompanyInScope } from '@/lib/api-auth'
 import { MANAGEMENT_ROLES } from '@/lib/constants'
@@ -15,7 +16,7 @@ export async function GET(req: Request) {
       assertCompanyInScope(companyId, scopedIds)
     }
 
-    const where: Record<string, unknown> = {}
+    const where: Prisma.AnnouncementWhereInput = {}
     if (companyId) {
       where.companyId = companyId
     } else if (scopedIds) {
