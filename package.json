@@ -12,7 +12,8 @@
     "test:cov": "vitest run --coverage",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "devtools:mcp": "npx -y chrome-devtools-mcp@latest"
   },
   "dependencies": {
     "@prisma/client": "^6.11.1",

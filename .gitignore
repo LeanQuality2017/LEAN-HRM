@@ -73,3 +73,5 @@ scripts/hrms_plan_*
 scripts/postprocess_hrms_plan.py
 
 .aider-desk/
+
+/scratch/
