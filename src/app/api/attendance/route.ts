@@ -194,7 +194,18 @@ export async function GET(req: Request) {
 
     if (dateStr) {
       const d = new Date(dateStr)
+      if (isNaN(d.getTime())) {
+        throw new ApiError(400, 'Invalid date format')
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        if (d.toISOString().slice(0, 10) !== dateStr) {
+          throw new ApiError(400, 'Invalid date: impossible calendar date')
+        }
+      }
       const next = new Date(d.getTime() + 86400000)
+      if (isNaN(next.getTime())) {
+        throw new ApiError(400, 'Invalid date format')
+      }
       where.date = { gte: d, lt: next }
     }
 
